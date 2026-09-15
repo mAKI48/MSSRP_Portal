@@ -1,250 +1,6514 @@
 (() => {
 'use strict';
 
-const SUPABASE_URL = 'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_oclE6KnOIjMUxIuCyKaFRiQ_Y8WZYgpo';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+/* ============================================================
+   ER:LC TAKTISK PLANERARE
+   PRO UI APPLICATION
+   ============================================================ */
 
-let currentUser = null, isLoginMode = true, db = null;
+const SUPABASE_URL =
+  'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
+
+const SUPABASE_ANON_KEY =
+  'sb_publishable_oclE6KnOIjMUxIuCyKaFRiQ_Y8WZYgpo';
+
+const supabase =
+  window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+
+
+/* ============================================================
+   GLOBAL STATE
+   ============================================================ */
+
+let currentUser = null;
+let isLoginMode = true;
+let db = null;
 
 const state = {
-  currentOp:null, opsList:[], stage:null, layers:{map:null,objects:null,selection:null},
-  mapImage:null,mapLocked:false,currentTool:'select',selectedSymbol:'police',selectedNodes:[],
-  isDrawing:false,currentPath:null,history:[],historyIndex:-1,maxHistory:50,
-  groups:[],timeline:[],notes:'',transformer:null,_mapBlob:null,_editingNode:null,confirmCallback:null
+
+  currentOp: null,
+
+  opsList: [],
+
+  stage: null,
+
+  layers: {
+    map: null,
+    objects: null,
+    selection: null
+  },
+
+  mapImage: null,
+
+  mapLocked: false,
+
+  currentTool: 'select',
+
+  selectedSymbol: 'police',
+
+  selectedNodes: [],
+
+  selectedObject: null,
+
+  zoom: 1,
+
+  history: [],
+
+  historyIndex: -1,
+
+  isDrawing: false,
+
+  drawingNode: null,
+
+  tempShape: null,
+
+  tempPoints: [],
+
+  dragStart: null,
+
+  editingObjectId: null,
+
+  confirmAction: null,
+
+  saveTimer: null,
+
+  suppressSave: false
+
 };
 
-const SYMBOL_LABELS = {
- police:'Polis',patrol:'Patrull',commander:'Befäl','op-chief':'Insatschef',operator:'Operatör',ni:'NI-operatör',
- k9:'K9',medic:'Sjukvårdare',negotiator:'Förhandlare',scout:'Spanare',sniper:'Skytt',suspect:'Misstänkt',
- armed:'Beväpnad',hostage:'Gisslan',civilian:'Civilperson',vip:'VIP',evidence:'Bevis','main-target':'Huvudmål',
- search:'Sökområde',entry:'Ingång',exit:'Utgång',rally:'Samlingsplats',command:'Ledningsplats',
- vehicle:'Fordonsplats','med-point':'Sjukvårdsplats',barrier:'Avspärrning',checkpoint:'Kontrollpunkt',
- evac:'Evakuering',collection:'Uppsamling',staging:'Staging',holding:'Holding',stack:'Stack-up','emergency-exit':'Nödutgång'
-};
-const SYMBOL_ICONS = {
- police:'P',patrol:'P',commander:'★','op-chief':'★★',operator:'●',ni:'NI',k9:'K9',medic:'+',negotiator:'F',scout:'S',
- sniper:'Y',suspect:'!',armed:'!',hostage:'G',civilian:'C',vip:'V',evidence:'B','main-target':'H',search:'?',
- entry:'→',exit:'←',rally:'S',command:'L',vehicle:'F','med-point':'+',barrier:'—',checkpoint:'K',evac:'E',
- collection:'U',staging:'☰',holding:'Ⅱ',stack:'≡','emergency-exit':'⇥'
+
+/* ============================================================
+   SYMBOL DEFINITIONS
+   ============================================================ */
+
+const SYMBOLS = {
+
+  police: {
+    label: 'Polis',
+    short: 'P',
+    color: '#2563eb'
+  },
+
+  patrol: {
+    label: 'Patrull',
+    short: 'P',
+    color: '#3b82f6'
+  },
+
+  commander: {
+    label: 'Befäl',
+    short: '★',
+    color: '#7c3aed'
+  },
+
+  'op-chief': {
+    label: 'Insatschef',
+    short: '★★',
+    color: '#9333ea'
+  },
+
+  operator: {
+    label: 'Operatör',
+    short: '●',
+    color: '#0ea5e9'
+  },
+
+  ni: {
+    label: 'NI-operatör',
+    short: 'NI',
+    color: '#111827'
+  },
+
+  k9: {
+    label: 'K9',
+    short: 'K9',
+    color: '#92400e'
+  },
+
+  medic: {
+    label: 'Sjukvård',
+    short: '+',
+    color: '#dc2626'
+  },
+
+  negotiator: {
+    label: 'Förhandlare',
+    short: 'F',
+    color: '#0891b2'
+  },
+
+  scout: {
+    label: 'Spanare',
+    short: 'S',
+    color: '#059669'
+  },
+
+  sniper: {
+    label: 'Skytt',
+    short: 'Y',
+    color: '#374151'
+  },
+
+  suspect: {
+    label: 'Misstänkt',
+    short: '!',
+    color: '#f59e0b'
+  },
+
+  armed: {
+    label: 'Beväpnad',
+    short: '!',
+    color: '#dc2626'
+  },
+
+  hostage: {
+    label: 'Gisslan',
+    short: 'G',
+    color: '#db2777'
+  },
+
+  civilian: {
+    label: 'Civil',
+    short: 'C',
+    color: '#64748b'
+  },
+
+  vip: {
+    label: 'VIP',
+    short: 'V',
+    color: '#ca8a04'
+  },
+
+  evidence: {
+    label: 'Bevis',
+    short: 'B',
+    color: '#a16207'
+  },
+
+  'main-target': {
+    label: 'Huvudmål',
+    short: 'H',
+    color: '#dc2626'
+  },
+
+  search: {
+    label: 'Sökområde',
+    short: '?',
+    color: '#16a34a'
+  },
+
+  entry: {
+    label: 'Ingång',
+    short: '→',
+    color: '#22c55e'
+  },
+
+  exit: {
+    label: 'Utgång',
+    short: '←',
+    color: '#ef4444'
+  },
+
+  rally: {
+    label: 'Samling',
+    short: 'S',
+    color: '#2563eb'
+  },
+
+  command: {
+    label: 'Ledning',
+    short: 'L',
+    color: '#7c3aed'
+  },
+
+  vehicle: {
+    label: 'Fordon',
+    short: 'F',
+    color: '#475569'
+  },
+
+  'med-point': {
+    label: 'Sjukvårdspunkt',
+    short: '+',
+    color: '#dc2626'
+  },
+
+  barrier: {
+    label: 'Avspärrning',
+    short: '—',
+    color: '#f97316'
+  },
+
+  checkpoint: {
+    label: 'Kontroll',
+    short: 'K',
+    color: '#ea580c'
+  },
+
+  evac: {
+    label: 'Evakuering',
+    short: 'E',
+    color: '#0891b2'
+  },
+
+  collection: {
+    label: 'Uppsamling',
+    short: 'U',
+    color: '#0f766e'
+  },
+
+  staging: {
+    label: 'Staging',
+    short: '☰',
+    color: '#6366f1'
+  },
+
+  holding: {
+    label: 'Holding',
+    short: 'Ⅱ',
+    color: '#64748b'
+  },
+
+  stack: {
+    label: 'Stack-up',
+    short: '≡',
+    color: '#8b5cf6'
+  },
+
+  'emergency-exit': {
+    label: 'Nödutgång',
+    short: '⇥',
+    color: '#16a34a'
+  }
+
 };
 
-const $ = id => document.getElementById(id);
-const uid = () => 'id_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
-function toast(msg,type=''){const el=$('toast');el.textContent=msg;el.className='toast'+(type?' '+type:'');clearTimeout(el._t);el.classList.remove('hidden');el._t=setTimeout(()=>el.classList.add('hidden'),2800);}
-function showModal(id){$(id)?.classList.add('active')} function hideModal(id){$(id)?.classList.remove('active')}
-function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 
-function openDB(){
- return new Promise((resolve,reject)=>{
-  const req=indexedDB.open('ERLC_TaktiskPlanerare',2);
-  req.onupgradeneeded=e=>{
-   const d=e.target.result;
-   if(!d.objectStoreNames.contains('operations')) d.createObjectStore('operations',{keyPath:'id'});
-   if(!d.objectStoreNames.contains('mapImages')) d.createObjectStore('mapImages',{keyPath:'opId'});
+/* ============================================================
+   DEFAULT OPERATION
+   ============================================================ */
+
+function createDefaultOperation(data = {}) {
+
+  const now = new Date();
+
+  return {
+
+    id:
+      data.id ||
+      crypto.randomUUID(),
+
+    name:
+      data.name ||
+      'Ny operation',
+
+    number:
+      data.number ||
+      `OP-${now.getFullYear()}-${String(
+        now.getMonth() + 1
+      ).padStart(2, '0')}-${String(
+        now.getDate()
+      ).padStart(2, '0')}`,
+
+    date:
+      data.date ||
+      now.toISOString().slice(0, 10),
+
+    location:
+      data.location ||
+      '',
+
+    commander:
+      data.commander ||
+      '',
+
+    leader:
+      data.leader ||
+      '',
+
+    status:
+      data.status ||
+      'PLANERING',
+
+    priority:
+      data.priority ||
+      'NORMAL',
+
+    threat:
+      data.threat ||
+      'LÅG',
+
+    objective:
+      data.objective ||
+      '',
+
+    notes:
+      data.notes ||
+      '',
+
+    map:
+      data.map ||
+      null,
+
+    mapLocked:
+      Boolean(data.mapLocked),
+
+    objects:
+      Array.isArray(data.objects)
+        ? data.objects
+        : [],
+
+    groups:
+      Array.isArray(data.groups)
+        ? data.groups
+        : [],
+
+    timeline:
+      Array.isArray(data.timeline)
+        ? data.timeline
+        : [],
+
+    createdAt:
+      data.createdAt ||
+      now.toISOString(),
+
+    updatedAt:
+      data.updatedAt ||
+      now.toISOString()
+
   };
-  req.onsuccess=e=>{db=e.target.result;resolve(db)}; req.onerror=e=>reject(e.target.error);
- });
-}
-function tx(store,mode,fn){return new Promise((resolve,reject)=>{const t=db.transaction(store,mode);const s=t.objectStore(store);let r;try{r=fn(s)}catch(e){reject(e);return}t.oncomplete=()=>resolve(r);t.onerror=e=>reject(e.target.error)})}
-const saveOperationLocal=op=>tx(['operations'],'readwrite',s=>s.put(op));
-const loadAllOperationsLocal=()=>new Promise((res,rej)=>{const t=db.transaction(['operations'],'readonly'),r=t.objectStore('operations').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=e=>rej(e.target.error)});
-const saveMapImage=(opId,blob)=>tx(['mapImages'],'readwrite',s=>s.put({opId,blob,updated:Date.now()}));
-const loadMapImage=opId=>new Promise((res,rej)=>{const t=db.transaction(['mapImages'],'readonly'),r=t.objectStore('mapImages').get(opId);r.onsuccess=()=>res(r.result?.blob||null);r.onerror=e=>rej(e.target.error)});
-const deleteLocal=id=>tx(['operations','mapImages'],'readwrite',s=>{s.delete(id)});
 
-function blobToDataURL(blob){return new Promise(resolve=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.readAsDataURL(blob)})}
-function dataURLtoBlob(url){const [head,data]=url.split(',');const mime=head.match(/:(.*?);/)[1];const bin=atob(data);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return new Blob([a],{type:mime})}
-
-async function saveOperationCloud(op){
- if(!currentUser)return;
- let mapImage=null;if(state._mapBlob)mapImage=await blobToDataURL(state._mapBlob);
- const payload={user_id:currentUser.id,name:op.name,number:op.number||null,date:op.date||null,location:op.location||null,
- commander:op.commander||null,leader:op.leader||null,status:op.status||'PLANERING',priority:op.priority||'NORMAL',
- threat:op.threat||'LÅG',objective:op.objective||null,notes:op.notes||null,
- data:{objects:op.objects||[],groups:op.groups||[],timeline:op.timeline||[],scale:op.scale||1,stageX:op.stageX||0,stageY:op.stageY||0,mapImage},
- updated_at:new Date().toISOString()};
- if(op.cloudId){const {error}=await supabase.from('operations').update(payload).eq('id',op.cloudId);if(error)throw error}
- else{const {data,error}=await supabase.from('operations').insert(payload).select('id').single();if(error)throw error;op.cloudId=data.id}
-}
-async function loadAllOperationsCloud(){
- if(!currentUser)return [];
- const {data,error}=await supabase.from('operations').select('*').order('updated_at',{ascending:false});
- if(error){console.error(error);return []}
- return (data||[]).map(r=>({id:r.id,cloudId:r.id,name:r.name,number:r.number,date:r.date,location:r.location,commander:r.commander,leader:r.leader,status:r.status,priority:r.priority,threat:r.threat,objective:r.objective,notes:r.notes,objects:r.data?.objects||[],groups:r.data?.groups||[],timeline:r.data?.timeline||[],scale:r.data?.scale||1,stageX:r.data?.stageX||0,stageY:r.data?.stageY||0,mapBase64:r.data?.mapImage||null,updated:new Date(r.updated_at).getTime()}));
 }
 
-function updateAuthUI(){
- const info=$('user-info'),login=$('btn-login');
- if(currentUser){login?.classList.add('hidden');info?.classList.remove('hidden');$('user-email').textContent=currentUser.email||''}
- else{login?.classList.remove('hidden');info?.classList.add('hidden')}
-}
-function setAuthMode(login){isLoginMode=login;$('auth-title').textContent=login?'Logga in':'Skapa konto';$('btn-auth-submit').textContent=login?'Logga in':'Skapa konto';$('auth-switch-text').textContent=login?'Har du inget konto?':'Har du redan ett konto?';$('auth-toggle').textContent=login?'Skapa konto':'Logga in';$('auth-error').classList.add('hidden')}
 
-function serializeObjects(){
- if(!state.layers.objects)return [];
- return state.layers.objects.getChildren().map(n=>{
-  const d={id:n.id(),type:n.getAttr('objType')||n.className,name:n.getAttr('objName')||'',desc:n.getAttr('objDesc')||'',groupId:n.getAttr('groupId')||'',color:n.getAttr('objColor')||'#2563eb',quantity:n.getAttr('quantity')||1,x:n.x(),y:n.y(),rotation:n.rotation(),scaleX:n.scaleX(),scaleY:n.scaleY()};
-  if(n.className==='Group'){d.symbolType=n.getAttr('symbolType')}
-  if(n.className==='Line'||n.className==='Arrow'){Object.assign(d,{points:n.points(),stroke:n.stroke(),strokeWidth:n.strokeWidth(),dash:n.dash(),opacity:n.opacity(),isArrow:!!n.getAttr('isArrow'),isFreehand:!!n.getAttr('isFreehand')})}
-  if(n.className==='Rect')Object.assign(d,{width:n.width(),height:n.height(),fill:n.fill(),stroke:n.stroke(),strokeWidth:n.strokeWidth(),opacity:n.opacity(),dash:n.dash()});
-  if(n.className==='Circle')Object.assign(d,{radius:n.radius(),fill:n.fill(),stroke:n.stroke(),strokeWidth:n.strokeWidth(),opacity:n.opacity()});
-  if(n.className==='Text')Object.assign(d,{text:n.text(),fontSize:n.fontSize(),fontStyle:n.fontStyle(),fill:n.fill()});
-  return d;
- });
-}
-function pushHistory(){if(!state.layers.objects)return;state.history=state.history.slice(0,state.historyIndex+1);state.history.push(serializeObjects());if(state.history.length>state.maxHistory)state.history.shift();else state.historyIndex++}
-function undo(){if(state.historyIndex<=0)return;state.historyIndex--;restoreObjects(state.history[state.historyIndex]);toast('Ångrat')}
-function redo(){if(state.historyIndex>=state.history.length-1)return;state.historyIndex++;restoreObjects(state.history[state.historyIndex]);toast('Gjort om')}
+/* ============================================================
+   DOM HELPERS
+   ============================================================ */
 
-function createSymbolNode(type,x,y,extra={}){
- const color=extra.color||extra.objColor||$('draw-color')?.value||'#2563eb',label=extra.name||extra.label||SYMBOL_LABELS[type]||type,qty=extra.quantity||1;
- const g=new Konva.Group({x,y,draggable:true,id:extra.id||uid()});
- g.setAttrs({objType:'symbol',symbolType:type,objName:label,objDesc:extra.desc||'',groupId:extra.groupId||'',objColor:color,quantity:qty});
- const c=new Konva.Circle({radius:10,fill:color,stroke:'#0f172a',strokeWidth:1.5,shadowColor:'black',shadowBlur:3,shadowOpacity:.35});
- const i=new Konva.Text({text:SYMBOL_ICONS[type]||'•',fontSize:9,fill:'#fff',width:20,height:20,align:'center',verticalAlign:'middle',offsetX:10,offsetY:10});
- const t=new Konva.Text({text:label,fontSize:9,fontFamily:'Inter',fill:'#f1f5f9',y:14});t.offsetX(t.width()/2);
- g.add(c,i,t);
- if(qty>1){const q=new Konva.Text({text:'x'+qty,fontSize:10,fontStyle:'bold',fill:'#fbbf24',y:-19});q.offsetX(q.width()/2);g.add(q)}
- return g;
-}
-function createObjectFromData(d){
- let n=null;
- if(d.type==='symbol'||d.symbolType)n=createSymbolNode(d.symbolType||'police',d.x,d.y,d);
- else if(d.type==='arrow'||d.isArrow)n=new Konva.Arrow({points:d.points||[0,0,50,0],stroke:d.stroke||d.color||'#2563eb',strokeWidth:d.strokeWidth||3,fill:d.stroke||d.color||'#2563eb',pointerLength:12,pointerWidth:10,dash:d.dash||[],opacity:d.opacity??1,draggable:true,id:d.id||uid()});
- else if(d.type==='line'||d.type==='path'||d.type==='freehand'||d.type==='Line')n=new Konva.Line({points:d.points||[0,0,50,0],stroke:d.stroke||d.color||'#2563eb',strokeWidth:d.strokeWidth||3,dash:d.dash||[],opacity:d.opacity??1,lineCap:'round',lineJoin:'round',draggable:true,id:d.id||uid(),tension:d.isFreehand?.4:0});
- else if(d.type==='rect'||d.type==='area'||d.type==='Rect')n=new Konva.Rect({x:d.x,y:d.y,width:d.width||80,height:d.height||60,fill:d.fill||'transparent',stroke:d.stroke||d.color||'#2563eb',strokeWidth:d.strokeWidth||2,dash:d.dash||[],opacity:d.opacity??1,draggable:true,id:d.id||uid()});
- else if(d.type==='circle'||d.type==='Circle')n=new Konva.Circle({x:d.x,y:d.y,radius:d.radius||40,fill:d.fill||'transparent',stroke:d.stroke||d.color||'#2563eb',strokeWidth:d.strokeWidth||2,opacity:d.opacity??1,draggable:true,id:d.id||uid()});
- else if(d.type==='text'||d.type==='Text')n=new Konva.Text({x:d.x,y:d.y,text:d.text||d.name||'Text',fontSize:d.fontSize||16,fontFamily:'Inter',fontStyle:d.fontStyle||'normal',fill:d.fill||d.color||'#f1f5f9',draggable:true,id:d.id||uid()});
- if(!n)return null;
- n.setAttrs({objType:d.type==='Rect'?'rect':(d.type==='Circle'?'circle':d.type),objName:d.name||d.label||'',objDesc:d.desc||'',groupId:d.groupId||'',objColor:d.color||'#2563eb',quantity:d.quantity||1});
- if(d.rotation)n.rotation(d.rotation);if(d.scaleX)n.scaleX(d.scaleX);if(d.scaleY)n.scaleY(d.scaleY);
- attachNodeEvents(n);state.layers.objects.add(n);return n;
-}
-function restoreObjects(arr){if(!state.layers.objects)return;state.layers.objects.destroyChildren();state.selectedNodes=[];state.transformer?.nodes([]);(arr||[]).forEach(createObjectFromData);state.layers.objects.batchDraw();updateObjectsList();updatePropertiesPanel()}
+const $ = selector =>
+  document.querySelector(selector);
 
-function attachNodeEvents(n){
- n.on('dragend',()=>{pushHistory();updateObjectsList()});
- n.on('click tap',e=>{if(state.currentTool!=='select')return;e.cancelBubble=true;selectNode(n,!!e.evt.shiftKey)});
- n.on('dblclick dbltap',()=>openEditObject(n));
-}
-function selectNode(n,multi=false){if(!multi)state.selectedNodes=[];if(!state.selectedNodes.includes(n))state.selectedNodes.push(n);state.transformer?.nodes(state.selectedNodes);state.layers.selection?.batchDraw();updatePropertiesPanel();updateObjectsList()}
-function clearSelection(){state.selectedNodes=[];state.transformer?.nodes([]);updatePropertiesPanel();updateObjectsList()}
+const $$ = selector =>
+  Array.from(document.querySelectorAll(selector));
 
-function initStage(){
- const c=$('konva-container'),w=c.clientWidth,h=c.clientHeight;
- state.stage=new Konva.Stage({container:'konva-container',width:w,height:h});
- state.layers.map=new Konva.Layer();state.layers.objects=new Konva.Layer();state.layers.selection=new Konva.Layer();
- state.stage.add(state.layers.map,state.layers.objects,state.layers.selection);
- state.transformer=new Konva.Transformer({rotateEnabled:true,enabledAnchors:['top-left','top-right','bottom-left','bottom-right'],borderStroke:'#3b82f6',anchorFill:'#2563eb',anchorStroke:'#fff',anchorSize:8});
- state.layers.selection.add(state.transformer);
 
- state.stage.on('wheel',e=>{e.evt.preventDefault();const old=state.stage.scaleX(),p=state.stage.getPointerPosition(),factor=e.evt.deltaY>0?.92:1.08,n=Math.min(Math.max(old*factor,.1),8),mp={x:(p.x-state.stage.x())/old,y:(p.y-state.stage.y())/old};state.stage.scale({x:n,y:n});state.stage.position({x:p.x-mp.x*n,y:p.y-mp.y*n});updateCoordsDisplay()});
- let pan=false,last=null;
- state.stage.on('contextmenu',e=>e.evt.preventDefault());
- state.stage.on('mousedown',e=>{if(e.evt.button===2){pan=true;last=state.stage.getPointerPosition();state.stage.container().style.cursor='grabbing';return}onPointerDown(e)});
- state.stage.on('mousemove',e=>{updateCoordsDisplay();if(pan){const p=state.stage.getPointerPosition();if(p&&last){state.stage.position({x:state.stage.x()+p.x-last.x,y:state.stage.y()+p.y-last.y});last=p;updateCoordsDisplay()}}else onPointerMove()});
- state.stage.on('mouseup',e=>{if(e.evt.button===2){pan=false;last=null;state.stage.container().style.cursor='default';return}onPointerUp()});
- state.stage.on('mouseleave',()=>{pan=false;last=null;state.stage.container().style.cursor='default'});
- state.stage.on('click tap',e=>{if(e.target===state.stage)clearSelection()});
- window.addEventListener('resize',()=>{if(!state.stage)return;state.stage.width(c.clientWidth);state.stage.height(c.clientHeight)});
-}
-function updateCoordsDisplay(){if(!state.stage)return;const p=state.stage.getPointerPosition()||{x:0,y:0};$('coords-display').textContent=`x: ${Math.round(p.x)}, y: ${Math.round(p.y)} | Zoom: ${Math.round(state.stage.scaleX()*100)}%`}
-function relPointer(){const p=state.stage.getPointerPosition();if(!p)return null;return state.stage.getAbsoluteTransform().copy().invert().point(p)}
+function show(element) {
 
-function onPointerDown(e){
- if(e.evt.button===2||state.mapLocked&&state.currentTool!=='select')return;
- if(state.currentTool==='pan'){state.stage.draggable(true);return}
- if(state.currentTool==='select')return;
- const p=relPointer();if(!p)return;state.isDrawing=true;
- const color=$('draw-color').value,sw=+$('stroke-width').value,op=+$('draw-opacity').value/100,dash=$('draw-dashed').checked?[8,6]:[];
- if(state.currentTool==='symbol'){const q=Math.max(1,parseInt(prompt('Antal (lämna tomt för 1):','1')||'1',10)||1);const n=createSymbolNode(state.selectedSymbol,p.x,p.y,{quantity:q,color});attachNodeEvents(n);state.layers.objects.add(n);state.layers.objects.batchDraw();pushHistory();updateObjectsList();state.isDrawing=false;return}
- if(state.currentTool==='text'){const n=new Konva.Text({x:p.x,y:p.y,text:'Text',fontSize:16,fontFamily:'Inter',fill:color,draggable:true,id:uid()});n.setAttrs({objType:'text',objName:'Text',objColor:color});attachNodeEvents(n);state.layers.objects.add(n);state.layers.objects.batchDraw();pushHistory();openEditObject(n);state.isDrawing=false;return}
- if(['line','arrow','path','freehand'].includes(state.currentTool)){const arrow=state.currentTool==='arrow';state.currentPath=new (arrow?Konva.Arrow:Konva.Line)({points:[p.x,p.y,p.x,p.y],stroke:color,strokeWidth:sw,fill:arrow?color:undefined,pointerLength:arrow?12:undefined,pointerWidth:arrow?10:undefined,dash,opacity:op,lineCap:'round',lineJoin:'round',tension:state.currentTool==='freehand'?.4:0,draggable:true,id:uid()});state.currentPath.setAttrs({objType:state.currentTool,objColor:color,isArrow:arrow,isFreehand:state.currentTool==='freehand'});state.layers.objects.add(state.currentPath)}
- if(['rect','area'].includes(state.currentTool)){state.currentPath=new Konva.Rect({x:p.x,y:p.y,width:0,height:0,fill:state.currentTool==='area'?color+'33':'transparent',stroke:color,strokeWidth:sw,dash,opacity:op,draggable:true,id:uid()});state.currentPath.setAttrs({objType:state.currentTool,objColor:color,_startX:p.x,_startY:p.y});state.layers.objects.add(state.currentPath)}
- if(state.currentTool==='circle'){state.currentPath=new Konva.Circle({x:p.x,y:p.y,radius:1,fill:'transparent',stroke:color,strokeWidth:sw,dash,opacity:op,draggable:true,id:uid()});state.currentPath.setAttrs({objType:'circle',objColor:color,_startX:p.x,_startY:p.y});state.layers.objects.add(state.currentPath)}
-}
-function onPointerMove(){if(!state.isDrawing||!state.currentPath)return;const p=relPointer();if(!p)return;const t=state.currentTool,n=state.currentPath;
- if(t==='line'||t==='arrow')n.points([n.points()[0],n.points()[1],p.x,p.y]);
- else if(t==='freehand'||t==='path')n.points(n.points().concat([p.x,p.y]));
- else if(t==='rect'||t==='area'){const sx=n.getAttr('_startX'),sy=n.getAttr('_startY');n.x(Math.min(sx,p.x));n.y(Math.min(sy,p.y));n.width(Math.abs(p.x-sx));n.height(Math.abs(p.y-sy))}
- else if(t==='circle'){const sx=n.getAttr('_startX'),sy=n.getAttr('_startY');n.radius(Math.hypot(p.x-sx,p.y-sy))}
- state.layers.objects.batchDraw()
-}
-function onPointerUp(){state.stage.draggable(false);if(!state.isDrawing)return;state.isDrawing=false;if(state.currentPath){attachNodeEvents(state.currentPath);pushHistory();updateObjectsList();state.currentPath=null}}
+  if (!element) return;
 
-function loadMapFromFile(file){if(!file)return;const url=URL.createObjectURL(file),img=new Image();img.onload=()=>{state.mapImage?.destroy();state.mapImage=new Konva.Image({image:img,x:0,y:0,listening:false});state.layers.map.destroyChildren();state.layers.map.add(state.mapImage);state.layers.map.batchDraw();fitMapToScreen();$('map-status').textContent=file.name;$('btn-upload-map').classList.add('hidden');$('btn-change-map').classList.remove('hidden');state._mapBlob=file;toast('Karta laddad','success');URL.revokeObjectURL(url)};img.src=url}
-function loadMapFromBlob(blob){if(!blob)return;const url=URL.createObjectURL(blob),img=new Image();img.onload=()=>{state.mapImage?.destroy();state.mapImage=new Konva.Image({image:img,x:0,y:0,listening:false});state.layers.map.destroyChildren();state.layers.map.add(state.mapImage);state.layers.map.batchDraw();$('map-status').textContent='Karta återställd';$('btn-upload-map').classList.add('hidden');$('btn-change-map').classList.remove('hidden');state._mapBlob=blob;fitMapToScreen();URL.revokeObjectURL(url)};img.src=url}
-function fitMapToScreen(){if(!state.mapImage||!state.stage)return;const s=Math.min(state.stage.width()/state.mapImage.width(),state.stage.height()/state.mapImage.height())*.92;state.stage.scale({x:s,y:s});state.stage.position({x:(state.stage.width()-state.mapImage.width()*s)/2,y:(state.stage.height()-state.mapImage.height()*s)/2});updateCoordsDisplay()}
-function updateObjectsList(){const list=$('objects-list');if(!list)return;list.innerHTML='';$('object-count').textContent=state.layers.objects?.getChildren().length||0;(state.layers.objects?.getChildren()||[]).forEach(n=>{const d=document.createElement('div');d.className='obj-item'+(state.selectedNodes.includes(n)?' selected':'');const c=n.getAttr('objColor')||'#2563eb';let name=n.getAttr('objName')||n.getAttr('objType')||'Objekt';const q=n.getAttr('quantity')||1;if(q>1)name+=` x${q}`;d.innerHTML=`<span class="obj-color" style="background:${esc(c)}"></span><span>${esc(name)}</span>`;d.onclick=()=>selectNode(n);list.appendChild(d)})}
-function updatePropertiesPanel(){const c=$('props-content');if(!c)return;if(!state.selectedNodes.length){c.innerHTML='<p class="muted">Markera ett objekt för att redigera.</p>';return}const n=state.selectedNodes[0];c.innerHTML=`<div class="form-group"><label>Namn</label><input id="prop-name" value="${esc(n.getAttr('objName')||'')}"></div><div class="form-group"><label>Antal</label><input id="prop-qty" type="number" min="1" value="${n.getAttr('quantity')||1}"></div><button id="prop-apply" class="btn btn-secondary btn-sm">Tillämpa</button>`;$('prop-apply').onclick=()=>{n.setAttr('objName',$('prop-name').value);n.setAttr('quantity',Math.max(1,+$('prop-qty').value||1));if(n.className==='Group'){n.getChildren()[2]?.text(n.getAttr('objName'));n.getChildren()[2]?.offsetX(n.getChildren()[2].width()/2)}pushHistory();updateObjectsList();state.layers.objects.batchDraw()}}
-function openEditObject(n){state._editingNode=n;$('edit-obj-name').value=n.getAttr('objName')||'';$('edit-obj-desc').value=n.getAttr('objDesc')||'';showModal('edit-object-modal')}
+  element.classList.remove('hidden');
 
-function renderGroups(){const l=$('groups-list');l.innerHTML='';state.groups.forEach(g=>{const d=document.createElement('div');d.className='stack-item';d.innerHTML=`<span class="obj-color" style="background:${esc(g.color)}"></span><span style="flex:1">${esc(g.name)}</span><button class="mini-danger">×</button>`;d.querySelector('button').onclick=()=>{state.groups=state.groups.filter(x=>x.id!==g.id);renderGroups();};l.appendChild(d)})}
-function renderTimeline(){const l=$('timeline-list');l.innerHTML='';state.timeline.forEach(t=>{const d=document.createElement('div');d.className='stack-item';d.innerHTML=`<span class="hint">${esc(t.time)}</span><span style="flex:1">${esc(t.event)}</span><button class="mini-danger">×</button>`;d.querySelector('button').onclick=()=>{state.timeline=state.timeline.filter(x=>x.id!==t.id);renderTimeline()};l.appendChild(d)})}
-
-async function collectOpData(){if(!state.currentOp)return null;const op=state.currentOp;op.objects=serializeObjects();op.groups=state.groups;op.timeline=state.timeline;op.notes=$('op-notes-panel').value;op.scale=state.stage?.scaleX()||1;op.stageX=state.stage?.x()||0;op.stageY=state.stage?.y()||0;op.updated=Date.now();return op}
-async function saveCurrentOp(){if(!state.currentOp)return;const op=await collectOpData();await saveOperationLocal(op);if(state._mapBlob)await saveMapImage(op.id,state._mapBlob);if(currentUser){try{await saveOperationCloud(op);toast('Sparad lokalt + i molnet','success')}catch(e){console.error(e);toast('Sparad lokalt, moln misslyckades','error')}}else toast('Sparad lokalt','success')}
-async function openOperation(id){
- let op=null;if(currentUser)op=(await loadAllOperationsCloud()).find(x=>x.id===id||x.cloudId===id);if(!op)op=(await loadAllOperationsLocal()).find(x=>x.id===id);if(!op){toast('Operation hittades inte','error');return}
- state.currentOp=op;state.groups=op.groups||[];state.timeline=op.timeline||[];state.notes=op.notes||'';state.history=[];state.historyIndex=-1;
- $('start-screen').classList.remove('active');$('app-screen').classList.add('active');$('header-op-name').textContent=op.name;$('header-op-meta').textContent=`${op.status||''} · ${op.location||''}`;
- if(!state.stage)initStage();else{state.layers.objects.destroyChildren();state.layers.map.destroyChildren();state.mapImage=null;state._mapBlob=null}
- $('op-notes-panel').value=op.notes||'';
- if(op.mapBase64)loadMapFromBlob(dataURLtoBlob(op.mapBase64));else{const b=await loadMapImage(op.id);if(b)loadMapFromBlob(b);else{$('map-status').textContent='Ingen karta uppladdad';$('btn-upload-map').classList.remove('hidden');$('btn-change-map').classList.add('hidden')}}
- restoreObjects(op.objects||[]);if(op.scale)state.stage.scale({x:op.scale,y:op.scale});if(op.stageX!=null)state.stage.position({x:op.stageX,y:op.stageY});pushHistory();renderGroups();renderTimeline();updateObjectsList();updateCoordsDisplay()
-}
-async function refreshOpsList(){
- const ops=currentUser?await loadAllOperationsCloud():await loadAllOperationsLocal();state.opsList=ops.sort((a,b)=>(b.updated||0)-(a.updated||0));const grid=$('saved-ops-list');grid.innerHTML='';$('ops-count').textContent=ops.length;
- $('no-ops-msg').style.display=ops.length?'none':'block';
- ops.forEach(op=>{const card=document.createElement('div');card.className='op-card';card.innerHTML=`<div class="op-card-name">${esc(op.name)}</div><div class="op-card-meta">${esc(op.location||'Ingen plats')} · ${esc(op.status||'PLANERING')}</div><div class="op-card-actions"><button class="btn btn-secondary btn-sm">Öppna</button></div>`;card.querySelector('button').onclick=()=>openOperation(op.id);grid.appendChild(card)})
 }
 
-function exportPlan(){
- if(!state.currentOp)return null;const plan={version:2,type:'ERLC-TACTICAL-PLAN',exportedAt:new Date().toISOString(),operation:{...state.currentOp,objects:serializeObjects(),groups:state.groups,timeline:state.timeline,notes:$('op-notes-panel').value,scale:state.stage?.scaleX()||1,stageX:state.stage?.x()||0,stageY:state.stage?.y()||0}};return plan
-}
-function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
-async function exportAction(type){
- if(type==='erlcplan'){const plan=exportPlan();if(!plan)return;downloadBlob(new Blob([JSON.stringify(plan,null,2)],{type:'application/json'}),(state.currentOp.name||'operation').replace(/[^\wåäö-]+/gi,'_')+'.erlcplan');toast('Plan exporterad','success');return}
- if(!state.stage)return;
- const data=state.stage.toDataURL({pixelRatio:2,mimeType:type==='jpg'?'image/jpeg':'image/png'});const a=document.createElement('a');a.href=data;a.download=(state.currentOp?.name||'taktisk-plan')+'.'+type;a.click()
-}
-async function importPlan(file){try{const plan=JSON.parse(await file.text()),op=plan.operation||plan;if(!op.name)throw new Error('Ogiltig plan');op.id=uid();op.created=Date.now();op.updated=Date.now();await saveOperationLocal(op);await refreshOpsList();await openOperation(op.id);toast('Plan importerad','success')}catch(e){console.error(e);toast('Kunde inte importera planen','error')}}
 
-function bindUI(){
- $('btn-login').onclick=()=>{setAuthMode(true);showModal('auth-modal')};
- $('auth-toggle').onclick=e=>{e.preventDefault();setAuthMode(!isLoginMode)};
- $('btn-auth-submit').onclick=async()=>{const email=$('auth-email').value.trim(),password=$('auth-password').value,error=$('auth-error');try{const r=isLoginMode?await supabase.auth.signInWithPassword({email,password}):await supabase.auth.signUp({email,password});if(r.error)throw r.error;hideModal('auth-modal');toast(isLoginMode?'Inloggad!':'Konto skapat!','success')}catch(e){error.textContent=e.message;error.classList.remove('hidden')}};
- $('btn-logout').onclick=async()=>{await supabase.auth.signOut();toast('Utloggad')};
- document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>hideModal(b.dataset.close));
+function hide(element) {
 
- $('btn-new-op').onclick=()=>{$('new-op-form').reset();$('op-date').value=new Date().toISOString().slice(0,10);showModal('new-op-modal')};
- $('new-op-form').onsubmit=async e=>{e.preventDefault();const op={id:uid(),name:$('op-name').value.trim(),number:$('op-number').value.trim(),date:$('op-date').value,location:$('op-location').value.trim(),commander:$('op-commander').value.trim(),leader:$('op-leader').value.trim(),status:$('op-status').value,priority:$('op-priority').value,threat:$('op-threat').value,objective:$('op-objective').value.trim(),notes:$('op-notes').value,groups:[{id:uid(),name:'ALFA',color:'#2563eb'},{id:uid(),name:'BRAVO',color:'#7c3aed'}],timeline:[],objects:[],created:Date.now(),updated:Date.now()};await saveOperationLocal(op);hideModal('new-op-modal');await refreshOpsList();await openOperation(op.id)};
- $('btn-open-op').onclick=()=>{if(state.opsList[0])openOperation(state.opsList[0].id);else toast('Det finns inga sparade operationer ännu')};
- $('btn-back-home').onclick=async()=>{await saveCurrentOp();$('app-screen').classList.remove('active');$('start-screen').classList.add('active');await refreshOpsList()};
+  if (!element) return;
 
- document.querySelectorAll('.tool-btn').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tool-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.currentTool=b.dataset.tool;clearSelection()});
- document.querySelectorAll('.symbol-item').forEach(b=>b.onclick=()=>{document.querySelectorAll('.symbol-item').forEach(x=>x.classList.remove('selected'));b.classList.add('selected');state.selectedSymbol=b.dataset.symbol;$('draw-color').value=b.dataset.color;document.querySelectorAll('.tool-btn').forEach(x=>x.classList.remove('active'));document.querySelector('[data-tool="symbol"]').classList.add('active');state.currentTool='symbol'});
- $('btn-upload-map').onclick=()=>$('map-upload').click();$('btn-change-map').onclick=()=>$('map-upload').click();$('map-upload').onchange=e=>e.target.files[0]&&loadMapFromFile(e.target.files[0]);
- $('btn-lock-map').onclick=()=>{state.mapLocked=!state.mapLocked;$('btn-lock-map').textContent=state.mapLocked?'Lås upp karta':'Lås karta';toast(state.mapLocked?'Kartan är låst':'Kartan är upplåst')};
- $('btn-save').onclick=saveCurrentOp;$('btn-undo').onclick=undo;$('btn-redo').onclick=redo;
- $('btn-zoom-in').onclick=()=>{const s=Math.min(8,state.stage.scaleX()*1.2);state.stage.scale({x:s,y:s});updateCoordsDisplay()};
- $('btn-zoom-out').onclick=()=>{const s=Math.max(.1,state.stage.scaleX()*.8);state.stage.scale({x:s,y:s});updateCoordsDisplay()};
- $('btn-zoom-fit').onclick=fitMapToScreen;$('btn-zoom-reset').onclick=()=>{state.stage.scale({x:1,y:1});state.stage.position({x:0,y:0});updateCoordsDisplay()};
- $('btn-export-menu').onclick=e=>{e.stopPropagation();$('export-dropdown').classList.toggle('hidden')};document.addEventListener('click',e=>{if(!e.target.closest('.export-wrap'))$('export-dropdown').classList.add('hidden')});
- document.querySelectorAll('[data-export]').forEach(b=>b.onclick=()=>exportAction(b.dataset.export));document.querySelector('[data-import]').onclick=()=>$('import-file').click();$('import-file').onchange=e=>e.target.files[0]&&importPlan(e.target.files[0]);
- $('btn-edit-object-save').onclick=()=>{if(!state._editingNode)return;state._editingNode.setAttrs({objName:$('edit-obj-name').value,objDesc:$('edit-obj-desc').value});if(state._editingNode.className==='Group'){const t=state._editingNode.getChildren()[2];if(t){t.text($('edit-obj-name').value);t.offsetX(t.width()/2)}}hideModal('edit-object-modal');pushHistory();updateObjectsList();updatePropertiesPanel();state.layers.objects.batchDraw()};
- $('btn-delete-selected').onclick=()=>{if(!state.selectedNodes.length)return;state.selectedNodes.forEach(n=>n.destroy());clearSelection();pushHistory();updateObjectsList();toast('Objekt borttaget')};
- $('btn-add-group').onclick=()=>{const name=prompt('Gruppnamn:','CHARLIE');if(!name)return;state.groups.push({id:uid(),name:name.trim(),color:'#'+Math.floor(Math.random()*16777215).toString(16).padStart(6,'0')});renderGroups()};
- $('btn-add-timeline').onclick=()=>{const time=prompt('Tid:','12:00');if(time===null)return;const event=prompt('Händelse:','Insats startar');if(!event)return;state.timeline.push({id:uid(),time,event});renderTimeline()};
- document.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();undo()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo()}if(e.key==='Delete')$('btn-delete-selected').click()});
+  element.classList.add('hidden');
+
 }
 
-async function init(){
- await openDB();bindUI();updateAuthUI();
- supabase.auth.onAuthStateChange((_event,session)=>{currentUser=session?.user||null;updateAuthUI();refreshOpsList()});
- try{const {data}=await supabase.auth.getSession();currentUser=data?.session?.user||null;updateAuthUI()}catch{}
- await refreshOpsList();
+
+function showModal(id) {
+
+  const modal = document.getElementById(id);
+
+  if (!modal) return;
+
+  modal.classList.add('active');
+
 }
-init().catch(e=>{console.error(e);toast('Kunde inte starta planeraren','error')});
+
+
+function closeModal(id) {
+
+  const modal = document.getElementById(id);
+
+  if (!modal) return;
+
+  modal.classList.remove('active');
+
+}
+
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+
+let toastTimer = null;
+
+function toast(message) {
+
+  const el = $('#toast');
+
+  if (!el) return;
+
+  el.textContent = message;
+
+  el.classList.remove('hidden');
+
+  clearTimeout(toastTimer);
+
+  toastTimer = setTimeout(() => {
+
+    el.classList.add('hidden');
+
+  }, 3000);
+
+}
+
+
+/* ============================================================
+   INDEXED DB
+   ============================================================ */
+
+function initDB() {
+
+  return new Promise((resolve, reject) => {
+
+    const request =
+      indexedDB.open(
+        'ERLC-Taktisk-Planerare',
+        1
+      );
+
+    request.onupgradeneeded = event => {
+
+      const database =
+        event.target.result;
+
+      if (!database.objectStoreNames.contains('operations')) {
+
+        const store =
+          database.createObjectStore(
+            'operations',
+            {
+              keyPath: 'id'
+            }
+          );
+
+        store.createIndex(
+          'updatedAt',
+          'updatedAt',
+          {
+            unique: false
+          }
+        );
+
+      }
+
+    };
+
+    request.onsuccess = event => {
+
+      db = event.target.result;
+
+      resolve(db);
+
+    };
+
+    request.onerror = () => {
+
+      reject(request.error);
+
+    };
+
+  });
+
+}
+
+
+function dbGetAll() {
+
+  return new Promise((resolve, reject) => {
+
+    if (!db) {
+
+      resolve([]);
+
+      return;
+
+    }
+
+    const transaction =
+      db.transaction(
+        'operations',
+        'readonly'
+      );
+
+    const store =
+      transaction.objectStore(
+        'operations'
+      );
+
+    const request =
+      store.getAll();
+
+    request.onsuccess = () => {
+
+      resolve(
+        request.result || []
+      );
+
+    };
+
+    request.onerror = () => {
+
+      reject(request.error);
+
+    };
+
+  });
+
+}
+
+
+function dbPut(operation) {
+
+  return new Promise((resolve, reject) => {
+
+    if (!db) {
+
+      resolve();
+
+      return;
+
+    }
+
+    const transaction =
+      db.transaction(
+        'operations',
+        'readwrite'
+      );
+
+    const store =
+      transaction.objectStore(
+        'operations'
+      );
+
+    const request =
+      store.put(operation);
+
+    request.onsuccess = () => {
+
+      resolve();
+
+    };
+
+    request.onerror = () => {
+
+      reject(request.error);
+
+    };
+
+  });
+
+}
+
+
+function dbDelete(id) {
+
+  return new Promise((resolve, reject) => {
+
+    if (!db) {
+
+      resolve();
+
+      return;
+
+    }
+
+    const transaction =
+      db.transaction(
+        'operations',
+        'readwrite'
+      );
+
+    const store =
+      transaction.objectStore(
+        'operations'
+      );
+
+    const request =
+      store.delete(id);
+
+    request.onsuccess = () => {
+
+      resolve();
+
+    };
+
+    request.onerror = () => {
+
+      reject(request.error);
+
+    };
+
+  });
+
+}
+
+
+/* ============================================================
+   LOAD OPERATIONS
+   ============================================================ */
+
+async function loadOperations() {
+
+  try {
+
+    state.opsList =
+      await dbGetAll();
+
+    state.opsList.sort(
+      (a, b) =>
+        new Date(b.updatedAt || 0) -
+        new Date(a.updatedAt || 0)
+    );
+
+  } catch (error) {
+
+    console.error(
+      'Could not load operations:',
+      error
+    );
+
+    state.opsList = [];
+
+  }
+
+  renderOperations();
+
+}
+
+
+/* ============================================================
+   RENDER OPERATIONS
+   ============================================================ */
+
+function renderOperations() {
+
+  const container =
+    $('#saved-ops-list');
+
+  const empty =
+    $('#no-ops-msg');
+
+  const count =
+    $('#ops-count');
+
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (count) {
+
+    count.textContent =
+      state.opsList.length;
+
+  }
+
+  if (!state.opsList.length) {
+
+    if (empty) show(empty);
+
+    return;
+
+  }
+
+  if (empty) hide(empty);
+
+  state.opsList.forEach(operation => {
+
+    const card =
+      document.createElement('div');
+
+    card.className =
+      'operation-card';
+
+    card.dataset.id =
+      operation.id;
+
+    const updated =
+      operation.updatedAt
+        ? new Date(
+            operation.updatedAt
+          ).toLocaleString(
+            'sv-SE',
+            {
+              dateStyle: 'short',
+              timeStyle: 'short'
+            }
+          )
+        : '—';
+
+    card.innerHTML = `
+
+      <div class="operation-card-header">
+
+        <div class="operation-card-title">
+          ${escapeHtml(
+            operation.name ||
+            'Namnlös operation'
+          )}
+        </div>
+
+        <div class="operation-card-status">
+          ${escapeHtml(
+            operation.status ||
+            'PLANERING'
+          )}
+        </div>
+
+      </div>
+
+      <div class="operation-card-meta">
+
+        <span>
+          ${escapeHtml(
+            operation.number || '—'
+          )}
+        </span>
+
+        <span>
+          ${escapeHtml(
+            operation.date || '—'
+          )}
+        </span>
+
+        ${
+          operation.location
+            ? `<span>${escapeHtml(
+                operation.location
+              )}</span>`
+            : ''
+        }
+
+      </div>
+
+      ${
+        operation.objective
+          ? `
+            <div class="operation-card-description">
+              ${escapeHtml(
+                operation.objective
+              )}
+            </div>
+          `
+          : ''
+      }
+
+      <div class="operation-card-footer">
+
+        <span>
+          Uppdaterad ${escapeHtml(updated)}
+        </span>
+
+        <div class="operation-card-actions">
+
+          <button
+            type="button"
+            data-action="open"
+          >
+            Öppna
+          </button>
+
+          <button
+            type="button"
+            data-action="delete"
+          >
+            Ta bort
+          </button>
+
+        </div>
+
+      </div>
+    `;
+
+    card.addEventListener(
+      'click',
+      event => {
+
+        const action =
+          event.target.closest(
+            '[data-action]'
+          );
+
+        if (action) {
+
+          event.stopPropagation();
+
+          if (
+            action.dataset.action ===
+            'open'
+          ) {
+
+            openOperation(
+              operation.id
+            );
+
+          }
+
+          if (
+            action.dataset.action ===
+            'delete'
+          ) {
+
+            confirmDeleteOperation(
+              operation.id
+            );
+
+          }
+
+          return;
+
+        }
+
+        openOperation(
+          operation.id
+        );
+
+      }
+    );
+
+    container.appendChild(card);
+
+  });
+
+}
+
+
+/* ============================================================
+   HTML ESCAPE
+   ============================================================ */
+
+function escapeHtml(value) {
+
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+}
+
+
+/* ============================================================
+   AUTH
+   ============================================================ */
+
+async function checkAuth() {
+
+  try {
+
+    const {
+      data,
+      error
+    } =
+      await supabase.auth.getSession();
+
+    if (error) {
+
+      console.warn(
+        'Auth session:',
+        error
+      );
+
+      return;
+
+    }
+
+    currentUser =
+      data?.session?.user ||
+      null;
+
+    updateAuthUI();
+
+  } catch (error) {
+
+    console.warn(
+      'Auth check failed:',
+      error
+    );
+
+  }
+
+}
+
+
+function updateAuthUI() {
+
+  const loginButton =
+    $('#btn-login');
+
+  const userInfo =
+    $('#user-info');
+
+  const email =
+    $('#user-email');
+
+  if (currentUser) {
+
+    hide(loginButton);
+    show(userInfo);
+
+    if (email) {
+
+      email.textContent =
+        currentUser.email || '';
+
+    }
+
+  } else {
+
+    show(loginButton);
+    hide(userInfo);
+
+  }
+
+}
+
+
+async function submitAuth() {
+
+  const email =
+    $('#auth-email')?.value.trim();
+
+  const password =
+    $('#auth-password')?.value;
+
+  const errorEl =
+    $('#auth-error');
+
+  if (errorEl) {
+
+    errorEl.textContent = '';
+
+    hide(errorEl);
+
+  }
+
+  if (!email || !password) {
+
+    if (errorEl) {
+
+      errorEl.textContent =
+        'Fyll i e-post och lösenord.';
+
+      show(errorEl);
+
+    }
+
+    return;
+
+  }
+
+  try {
+
+    let result;
+
+    if (isLoginMode) {
+
+      result =
+        await supabase.auth.signInWithPassword({
+          email,
+          password
+        });
+
+    } else {
+
+      result =
+        await supabase.auth.signUp({
+          email,
+          password
+        });
+
+    }
+
+    if (result.error) {
+
+      throw result.error;
+
+    }
+
+    currentUser =
+      result.data?.user ||
+      null;
+
+    closeModal('auth-modal');
+
+    updateAuthUI();
+
+    if (!isLoginMode) {
+
+      toast(
+        'Kontot har skapats.'
+      );
+
+    } else {
+
+      toast(
+        'Du är nu inloggad.'
+      );
+
+    }
+
+  } catch (error) {
+
+    console.error(error);
+
+    if (errorEl) {
+
+      errorEl.textContent =
+        error.message ||
+        'Något gick fel.';
+
+      show(errorEl);
+
+    }
+
+  }
+
+}
+
+
+async function logout() {
+
+  try {
+
+    await supabase.auth.signOut();
+
+  } catch (error) {
+
+    console.warn(error);
+
+  }
+
+  currentUser = null;
+
+  updateAuthUI();
+
+  toast(
+    'Du har loggats ut.'
+  );
+
+}
+
+
+/* ============================================================
+   CREATE OPERATION
+   ============================================================ */
+
+function openNewOperationModal() {
+
+  const form =
+    $('#new-op-form');
+
+  if (form) {
+
+    form.reset();
+
+  }
+
+  const date =
+    $('#op-date');
+
+  if (date) {
+
+    date.value =
+      new Date()
+        .toISOString()
+        .slice(0, 10);
+
+  }
+
+  showModal(
+    'new-op-modal'
+  );
+
+}
+
+
+async function createOperationFromForm(
+  event
+) {
+
+  event.preventDefault();
+
+  const operation =
+    createDefaultOperation({
+
+      name:
+        $('#op-name')?.value.trim(),
+
+      number:
+        $('#op-number')?.value.trim(),
+
+      date:
+        $('#op-date')?.value,
+
+      location:
+        $('#op-location')?.value.trim(),
+
+      commander:
+        $('#op-commander')?.value.trim(),
+
+      leader:
+        $('#op-leader')?.value.trim(),
+
+      status:
+        $('#op-status')?.value ||
+        'PLANERING',
+
+      priority:
+        $('#op-priority')?.value ||
+        'NORMAL',
+
+      threat:
+        $('#op-threat')?.value ||
+        'LÅG',
+
+      objective:
+        $('#op-objective')?.value.trim(),
+
+      notes:
+        $('#op-notes')?.value.trim()
+
+    });
+
+  await dbPut(operation);
+
+  state.opsList.unshift(
+    operation
+  );
+
+  state.currentOp =
+    operation;
+
+  closeModal(
+    'new-op-modal'
+  );
+
+  renderOperations();
+
+  openEditor();
+
+  toast(
+    'Operation skapad.'
+  );
+
+}
+
+
+/* ============================================================
+   OPEN OPERATION
+   ============================================================ */
+
+function openOperation(id) {
+
+  const operation =
+    state.opsList.find(
+      item => item.id === id
+    );
+
+  if (!operation) {
+
+    toast(
+      'Operationen kunde inte hittas.'
+    );
+
+    return;
+
+  }
+
+  state.currentOp =
+    structuredClone(operation);
+
+  openEditor();
+
+}
+
+
+function openEditor() {
+
+  hide(
+    $('#start-screen')
+  );
+
+  show(
+    $('#app-screen')
+  );
+
+  updateHeader();
+
+  initStage();
+
+  renderOperationObjects();
+
+  renderGroups();
+
+  renderTimeline();
+
+  updateNotes();
+
+  resetHistory();
+
+  if (state.currentOp?.map) {
+
+    loadMapFromData(
+      state.currentOp.map
+    );
+
+  } else {
+
+    clearMap();
+
+  }
+
+}
+
+
+/* ============================================================
+   CLOSE EDITOR
+   ============================================================ */
+
+function closeEditor() {
+
+  saveCurrentOperation();
+
+  hide(
+    $('#app-screen')
+  );
+
+  show(
+    $('#start-screen')
+  );
+
+  state.currentOp = null;
+
+  destroyStage();
+
+  loadOperations();
+
+}
+
+
+/* ============================================================
+   UPDATE HEADER
+   ============================================================ */
+
+function updateHeader() {
+
+  const name =
+    $('#header-op-name');
+
+  const meta =
+    $('#header-op-meta');
+
+  if (!state.currentOp) return;
+
+  if (name) {
+
+    name.textContent =
+      state.currentOp.name ||
+      'Operation';
+
+  }
+
+  if (meta) {
+
+    const pieces = [
+      state.currentOp.number,
+      state.currentOp.date,
+      state.currentOp.location
+    ].filter(Boolean);
+
+    meta.textContent =
+      pieces.join(' • ');
+
+  }
+
+}
+
+
+/* ============================================================
+   STAGE
+   ============================================================ */
+
+function initStage() {
+
+  const container =
+    $('#konva-container');
+
+  if (!container) return;
+
+  destroyStage();
+
+  const rect =
+    container.getBoundingClientRect();
+
+  state.stage =
+    new Konva.Stage({
+
+      container:
+        container,
+
+      width:
+        rect.width,
+
+      height:
+        rect.height
+
+    });
+
+  state.layers.map =
+    new Konva.Layer();
+
+  state.layers.objects =
+    new Konva.Layer();
+
+  state.layers.selection =
+    new Konva.Layer();
+
+  state.stage.add(
+    state.layers.map
+  );
+
+  state.stage.add(
+    state.layers.objects
+  );
+
+  state.stage.add(
+    state.layers.selection
+  );
+
+  setupStageEvents();
+
+  window.addEventListener(
+    'resize',
+    resizeStage
+  );
+
+}
+
+
+function destroyStage() {
+
+  window.removeEventListener(
+    'resize',
+    resizeStage
+  );
+
+  if (state.stage) {
+
+    state.stage.destroy();
+
+  }
+
+  state.stage = null;
+
+  state.layers = {
+    map: null,
+    objects: null,
+    selection: null
+  };
+
+}
+
+
+function resizeStage() {
+
+  if (!state.stage) return;
+
+  const container =
+    $('#konva-container');
+
+  if (!container) return;
+
+  const rect =
+    container.getBoundingClientRect();
+
+  state.stage.width(
+    rect.width
+  );
+
+  state.stage.height(
+    rect.height
+  );
+
+  redrawMap();
+
+}
+
+
+/* ============================================================
+   STAGE EVENTS
+   ============================================================ */
+
+function setupStageEvents() {
+
+  if (!state.stage) return;
+
+  state.stage.on(
+    'mousedown touchstart',
+    handleStageDown
+  );
+
+  state.stage.on(
+    'mousemove touchmove',
+    handleStageMove
+  );
+
+  state.stage.on(
+    'mouseup touchend',
+    handleStageUp
+  );
+
+  state.stage.on(
+    'click tap',
+    handleStageClick
+  );
+
+  state.stage.on(
+    'wheel',
+    handleWheel
+  );
+
+}
+
+
+/* ============================================================
+   POINTER POSITION
+   ============================================================ */
+
+function pointerPosition() {
+
+  if (!state.stage) {
+
+    return {
+      x: 0,
+      y: 0
+    };
+
+  }
+
+  return (
+    state.stage.getPointerPosition() ||
+    {
+      x: 0,
+      y: 0
+    }
+  );
+
+}
+
+
+/* ============================================================
+   TOOL HANDLING
+   ============================================================ */
+
+function setTool(tool) {
+
+  state.currentTool =
+    tool;
+
+  $$('.tool-btn').forEach(
+    button => {
+
+      button.classList.toggle(
+        'active',
+        button.dataset.tool === tool
+      );
+
+    }
+  );
+
+  if (state.stage) {
+
+    state.stage.container().style.cursor =
+      tool === 'pan'
+        ? 'grab'
+        : tool === 'select'
+          ? 'default'
+          : 'crosshair';
+
+  }
+
+}
+
+
+function selectSymbol(symbol) {
+
+  if (!SYMBOLS[symbol]) return;
+
+  state.selectedSymbol =
+    symbol;
+
+  $$('.symbol-item').forEach(
+    button => {
+
+      button.classList.toggle(
+        'selected',
+        button.dataset.symbol === symbol
+      );
+
+    }
+  );
+
+}
+
+
+/* ============================================================
+   STAGE DOWN
+   ============================================================ */
+
+function handleStageDown(event) {
+
+  const pointer =
+    pointerPosition();
+
+  if (
+    state.currentTool ===
+    'select'
+  ) {
+
+    return;
+
+  }
+
+
+  if (
+    state.currentTool ===
+    'pan'
+  ) {
+
+    state.dragStart = {
+      x: pointer.x,
+      y: pointer.y
+    };
+
+    return;
+
+  }
+
+
+  if (
+    state.currentTool ===
+    'symbol'
+  ) {
+
+    if (state.mapLocked) {
+
+      toast(
+        'Kartan är låst.'
+      );
+
+      return;
+
+    }
+
+    createSymbolAt(
+      pointer.x,
+      pointer.y
+    );
+
+    return;
+
+  }
+
+
+  if (
+    state.currentTool ===
+    'text'
+  ) {
+
+    createTextAt(
+      pointer.x,
+      pointer.y
+    );
+
+    return;
+
+  }
+
+
+  if (
+    state.currentTool ===
+    'freehand'
+  ) {
+
+    startFreehand(
+      pointer
+    );
+
+    return;
+
+  }
+
+
+  if (
+    [
+      'line',
+      'arrow',
+      'path',
+      'rect',
+      'area',
+      'circle'
+    ].includes(
+      state.currentTool
+    )
+  ) {
+
+    startDrawing(
+      pointer
+    );
+
+  }
+
+}
+
+
+/* ============================================================
+   STAGE MOVE
+   ============================================================ */
+
+function handleStageMove() {
+
+  const pointer =
+    pointerPosition();
+
+  updateCoordinates(
+    pointer
+  );
+
+
+  if (
+    state.currentTool ===
+    'pan' &&
+    state.dragStart
+  ) {
+
+    const dx =
+      pointer.x -
+      state.dragStart.x;
+
+    const dy =
+      pointer.y -
+      state.dragStart.y;
+
+    const layers = [
+      state.layers.map,
+      state.layers.objects
+    ];
+
+    layers.forEach(
+      layer => {
+
+        if (!layer) return;
+
+        layer.x(
+          layer.x() + dx
+        );
+
+        layer.y(
+          layer.y() + dy
+        );
+
+      }
+    );
+
+    state.dragStart = {
+      x: pointer.x,
+      y: pointer.y
+    };
+
+    state.stage.batchDraw();
+
+    return;
+
+  }
+
+
+  if (!state.isDrawing) return;
+
+  updateDrawing(
+    pointer
+  );
+
+}
+
+
+/* ============================================================
+   STAGE UP
+   ============================================================ */
+
+function handleStageUp() {
+
+  if (
+    state.currentTool ===
+    'pan'
+  ) {
+
+    state.dragStart = null;
+
+    return;
+
+  }
+
+  if (
+    state.isDrawing
+  ) {
+
+    finishDrawing();
+
+  }
+
+}
+
+
+/* ============================================================
+   STAGE CLICK
+   ============================================================ */
+
+function handleStageClick(event) {
+
+  const target =
+    event.target;
+
+  if (
+    state.currentTool !==
+    'select'
+  ) {
+
+    return;
+
+  }
+
+  if (
+    target ===
+    state.stage
+  ) {
+
+    clearSelection();
+
+    return;
+
+  }
+
+  const objectId =
+    target.getAttr(
+      'objectId'
+    );
+
+  if (objectId) {
+
+    selectObject(
+      objectId
+    );
+
+  }
+
+}
+
+
+/* ============================================================
+   COORDINATES
+   ============================================================ */
+
+function updateCoordinates(
+  pointer
+) {
+
+  const display =
+    $('#coords-display');
+
+  if (!display) return;
+
+  display.innerHTML = `
+    X: ${Math.round(pointer.x)}
+    <span>•</span>
+    Y: ${Math.round(pointer.y)}
+    <span>•</span>
+    ZOOM: ${Math.round(state.zoom * 100)}%
+  `;
+
+}
+
+
+/* ============================================================
+   SYMBOL CREATION
+   ============================================================ */
+
+function createSymbolAt(
+  x,
+  y
+) {
+
+  if (!state.currentOp) return;
+
+  const symbol =
+    SYMBOLS[
+      state.selectedSymbol
+    ];
+
+  if (!symbol) return;
+
+  const object = {
+
+    id:
+      crypto.randomUUID(),
+
+    type:
+      'symbol',
+
+    symbol:
+      state.selectedSymbol,
+
+    name:
+      symbol.label,
+
+    description:
+      '',
+
+    x,
+    y,
+
+    color:
+      getDrawColor(symbol.color),
+
+    opacity:
+      getDrawOpacity(),
+
+    rotation:
+      0,
+
+    scale:
+      1
+
+  };
+
+  state.currentOp.objects.push(
+    object
+  );
+
+  addSymbolNode(
+    object
+  );
+
+  selectObject(
+    object.id
+  );
+
+  pushHistory();
+
+  scheduleSave();
+
+}
+
+
+/* ============================================================
+   SYMBOL NODE
+   ============================================================ */
+
+function addSymbolNode(
+  object
+) {
+
+  if (!state.layers.objects) return;
+
+  const symbol =
+    SYMBOLS[
+      object.symbol
+    ] || {
+      label: object.name || 'Objekt',
+      short: '?',
+      color: '#64748b'
+    };
+
+  const group =
+    new Konva.Group({
+
+      x:
+        object.x,
+
+      y:
+        object.y,
+
+      draggable:
+        !state.mapLocked,
+
+      rotation:
+        object.rotation || 0,
+
+      scaleX:
+        object.scale || 1,
+
+      scaleY:
+        object.scale || 1,
+
+      id:
+        object.id
+
+    });
+
+  group.setAttr(
+    'objectId',
+    object.id
+  );
+
+  const shadow =
+    new Konva.Circle({
+
+      radius:
+        18,
+
+      fill:
+        'rgba(0,0,0,0.25)',
+
+      shadowColor:
+        'rgba(0,0,0,0.5)',
+
+      shadowBlur:
+        8,
+
+      shadowOpacity:
+        0.6,
+
+      shadowOffsetY:
+        3
+
+    });
+
+  const circle =
+    new Konva.Circle({
+
+      radius:
+        15,
+
+      fill:
+        object.color ||
+        symbol.color,
+
+      stroke:
+        '#dbeafe',
+
+      strokeWidth:
+        1.5,
+
+      opacity:
+        object.opacity ??
+        1
+
+    });
+
+  const text =
+    new Konva.Text({
+
+      text:
+        symbol.short,
+
+      width:
+        30,
+
+      height:
+        30,
+
+      x:
+        -15,
+
+      y:
+        -10,
+
+      align:
+        'center',
+
+      verticalAlign:
+        'middle',
+
+      fontFamily:
+        'Roboto Mono',
+
+      fontSize:
+        symbol.short.length > 2
+          ? 7
+          : 9,
+
+      fontStyle:
+        'bold',
+
+      fill:
+        '#ffffff',
+
+      listening:
+        false
+
+    });
+
+  group.add(
+    shadow,
+    circle,
+    text
+  );
+
+  group.on(
+    'click tap',
+    event => {
+
+      event.cancelBubble = true;
+
+      selectObject(
+        object.id
+      );
+
+    }
+  );
+
+  group.on(
+    'dragend',
+    () => {
+
+      object.x =
+        group.x();
+
+      object.y =
+        group.y();
+
+      pushHistory();
+
+      scheduleSave();
+
+      renderProperties();
+
+    }
+  );
+
+  state.layers.objects.add(
+    group
+  );
+
+  state.layers.objects.batchDraw();
+
+}
+
+
+/* ============================================================
+   TEXT
+   ============================================================ */
+
+function createTextAt(
+  x,
+  y
+) {
+
+  const value =
+    prompt(
+      'Ange text:'
+    );
+
+  if (!value) return;
+
+  const object = {
+
+    id:
+      crypto.randomUUID(),
+
+    type:
+      'text',
+
+    name:
+      value,
+
+    text:
+      value,
+
+    description:
+      '',
+
+    x,
+    y,
+
+    color:
+      getDrawColor(),
+
+    opacity:
+      getDrawOpacity(),
+
+    fontSize:
+      18
+
+  };
+
+  state.currentOp.objects.push(
+    object
+  );
+
+  addTextNode(
+    object
+  );
+
+  selectObject(
+    object.id
+  );
+
+  pushHistory();
+
+  scheduleSave();
+
+}
+
+
+function addTextNode(
+  object
+) {
+
+  const node =
+    new Konva.Text({
+
+      x:
+        object.x,
+
+      y:
+        object.y,
+
+      text:
+        object.text ||
+        object.name ||
+        'Text',
+
+      fontFamily:
+        'Inter',
+
+      fontSize:
+        object.fontSize ||
+        18,
+
+      fontStyle:
+        'bold',
+
+      fill:
+        object.color ||
+        '#ffffff',
+
+      opacity:
+        object.opacity ??
+        1,
+
+      draggable:
+        !state.mapLocked
+
+    });
+
+  node.setAttr(
+    'objectId',
+    object.id
+  );
+
+  node.on(
+    'click tap',
+    event => {
+
+      event.cancelBubble = true;
+
+      selectObject(
+        object.id
+      );
+
+    }
+  );
+
+  node.on(
+    'dragend',
+    () => {
+
+      object.x =
+        node.x();
+
+      object.y =
+        node.y();
+
+      pushHistory();
+
+      scheduleSave();
+
+    }
+  );
+
+  state.layers.objects.add(
+    node
+  );
+
+  state.layers.objects.batchDraw();
+
+}
+
+
+/* ============================================================
+   DRAWING
+   ============================================================ */
+
+function startDrawing(
+  point
+) {
+
+  if (state.mapLocked) {
+
+    toast(
+      'Kartan är låst.'
+    );
+
+    return;
+
+  }
+
+  state.isDrawing = true;
+
+  state.drawingNode = {
+    x: point.x,
+    y: point.y
+  };
+
+  state.tempPoints = [
+    point.x,
+    point.y
+  ];
+
+  const tool =
+    state.currentTool;
+
+  if (
+    tool === 'line' ||
+    tool === 'arrow' ||
+    tool === 'path'
+  ) {
+
+    state.tempShape =
+      new Konva.Line({
+
+        points:
+          state.tempPoints,
+
+        stroke:
+          getDrawColor(),
+
+        strokeWidth:
+          getStrokeWidth(),
+
+        opacity:
+          getDrawOpacity(),
+
+        dash:
+          getDash(),
+
+        lineCap:
+          'round',
+
+        lineJoin:
+          'round',
+
+        tension:
+          tool === 'path'
+            ? 0.15
+            : 0
+
+      });
+
+    if (tool === 'arrow') {
+
+      state.tempShape =
+        new Konva.Arrow({
+
+          points:
+            state.tempPoints,
+
+          stroke:
+            getDrawColor(),
+
+          fill:
+            getDrawColor(),
+
+          strokeWidth:
+            getStrokeWidth(),
+
+          pointerLength:
+            10,
+
+          pointerWidth:
+            10,
+
+          opacity:
+            getDrawOpacity(),
+
+          dash:
+            getDash(),
+
+          lineCap:
+            'round',
+
+          lineJoin:
+            'round'
+
+        });
+
+    }
+
+    state.layers.objects.add(
+      state.tempShape
+    );
+
+  }
+
+
+  if (
+    tool === 'freehand'
+  ) {
+
+    state.tempShape =
+      new Konva.Line({
+
+        points:
+          state.tempPoints,
+
+        stroke:
+          getDrawColor(),
+
+        strokeWidth:
+          getStrokeWidth(),
+
+        opacity:
+          getDrawOpacity(),
+
+        dash:
+          getDash(),
+
+        lineCap:
+          'round',
+
+        lineJoin:
+          'round',
+
+        tension:
+          0.3
+
+      });
+
+    state.layers.objects.add(
+      state.tempShape
+    );
+
+  }
+
+
+  if (
+    tool === 'rect'
+  ) {
+
+    state.tempShape =
+      new Konva.Rect({
+
+        x:
+          point.x,
+
+        y:
+          point.y,
+
+        width:
+          0,
+
+        height:
+          0,
+
+        stroke:
+          getDrawColor(),
+
+        strokeWidth:
+          getStrokeWidth(),
+
+        opacity:
+          getDrawOpacity(),
+
+        dash:
+          getDash(),
+
+        fill:
+          hexToRgba(
+            getDrawColor(),
+            0.08
+          )
+
+      });
+
+    state.layers.objects.add(
+      state.tempShape
+    );
+
+  }
+
+
+  if (
+    tool === 'circle'
+  ) {
+
+    state.tempShape =
+      new Konva.Circle({
+
+        x:
+          point.x,
+
+        y:
+          point.y,
+
+        radius:
+          0,
+
+        stroke:
+          getDrawColor(),
+
+        strokeWidth:
+          getStrokeWidth(),
+
+        opacity:
+          getDrawOpacity(),
+
+        dash:
+          getDash(),
+
+        fill:
+          hexToRgba(
+            getDrawColor(),
+            0.08
+          )
+
+      });
+
+    state.layers.objects.add(
+      state.tempShape
+    );
+
+  }
+
+
+  if (
+    tool === 'area'
+  ) {
+
+    state.tempShape =
+      new Konva.Rect({
+
+        x:
+          point.x,
+
+        y:
+          point.y,
+
+        width:
+          0,
+
+        height:
+          0,
+
+        stroke:
+          getDrawColor(),
+
+        strokeWidth:
+          getStrokeWidth(),
+
+        opacity:
+          getDrawOpacity(),
+
+        dash:
+          getDash(),
+
+        fill:
+          hexToRgba(
+            getDrawColor(),
+            0.16
+          )
+
+      });
+
+    state.layers.objects.add(
+      state.tempShape
+    );
+
+  }
+
+  state.layers.objects.batchDraw();
+
+}
+
+
+function startFreehand(
+  point
+) {
+
+  if (state.mapLocked) {
+
+    toast(
+      'Kartan är låst.'
+    );
+
+    return;
+
+  }
+
+  state.isDrawing = true;
+
+  state.tempPoints = [
+    point.x,
+    point.y
+  ];
+
+  state.tempShape =
+    new Konva.Line({
+
+      points:
+        state.tempPoints,
+
+      stroke:
+        getDrawColor(),
+
+      strokeWidth:
+        getStrokeWidth(),
+
+      opacity:
+        getDrawOpacity(),
+
+      dash:
+        getDash(),
+
+      lineCap:
+        'round',
+
+      lineJoin:
+        'round',
+
+      tension:
+        0.25
+
+    });
+
+  state.layers.objects.add(
+    state.tempShape
+  );
+
+}
+
+
+function updateDrawing(
+  point
+) {
+
+  if (!state.tempShape) return;
+
+  const tool =
+    state.currentTool;
+
+  if (
+    tool === 'line' ||
+    tool === 'arrow' ||
+    tool === 'path' ||
+    tool === 'freehand'
+  ) {
+
+    state.tempPoints.push(
+      point.x,
+      point.y
+    );
+
+    state.tempShape.points(
+      state.tempPoints
+    );
+
+  }
+
+
+  if (
+    tool === 'rect' ||
+    tool === 'area'
+  ) {
+
+    const start =
+      state.drawingNode;
+
+    state.tempShape.x(
+      Math.min(
+        start.x,
+        point.x
+      )
+    );
+
+    state.tempShape.y(
+      Math.min(
+        start.y,
+        point.y
+      )
+    );
+
+    state.tempShape.width(
+      Math.abs(
+        point.x -
+        start.x
+      )
+    );
+
+    state.tempShape.height(
+      Math.abs(
+        point.y -
+        start.y
+      )
+    );
+
+  }
+
+
+  if (
+    tool === 'circle'
+  ) {
+
+    const start =
+      state.drawingNode;
+
+    const radius =
+      Math.sqrt(
+        Math.pow(
+          point.x -
+          start.x,
+          2
+        ) +
+        Math.pow(
+          point.y -
+          start.y,
+          2
+        )
+      );
+
+    state.tempShape.radius(
+      radius
+    );
+
+  }
+
+  state.layers.objects.batchDraw();
+
+}
+
+
+function finishDrawing() {
+
+  if (!state.isDrawing) return;
+
+  state.isDrawing = false;
+
+  if (
+    !state.tempShape
+  ) {
+
+    return;
+
+  }
+
+  const node =
+    state.tempShape;
+
+  const object = {
+
+    id:
+      crypto.randomUUID(),
+
+    type:
+      state.currentTool,
+
+    name:
+      drawingToolLabel(
+        state.currentTool
+      ),
+
+    description:
+      '',
+
+    color:
+      getDrawColor(),
+
+    opacity:
+      getDrawOpacity(),
+
+    strokeWidth:
+      getStrokeWidth(),
+
+    dashed:
+      $('#draw-dashed')?.checked ||
+      false
+
+  };
+
+
+  if (
+    [
+      'line',
+      'arrow',
+      'path',
+      'freehand'
+    ].includes(
+      state.currentTool
+    )
+  ) {
+
+    object.points =
+      node.points();
+
+  }
+
+
+  if (
+    [
+      'rect',
+      'area'
+    ].includes(
+      state.currentTool
+    )
+  ) {
+
+    object.x =
+      node.x();
+
+    object.y =
+      node.y();
+
+    object.width =
+      node.width();
+
+    object.height =
+      node.height();
+
+  }
+
+
+  if (
+    state.currentTool ===
+    'circle'
+  ) {
+
+    object.x =
+      node.x();
+
+    object.y =
+      node.y();
+
+    object.radius =
+      node.radius();
+
+  }
+
+  node.destroy();
+
+  state.currentOp.objects.push(
+    object
+  );
+
+  addDrawingNode(
+    object
+  );
+
+  state.tempShape = null;
+  state.tempPoints = [];
+  state.drawingNode = null;
+
+  selectObject(
+    object.id
+  );
+
+  pushHistory();
+
+  scheduleSave();
+
+}
+
+
+function drawingToolLabel(
+  tool
+) {
+
+  const labels = {
+
+    line: 'Linje',
+
+    arrow: 'Pil',
+
+    path: 'Förflyttning',
+
+    freehand: 'Frihand',
+
+    rect: 'Rektangel',
+
+    area: 'Område',
+
+    circle: 'Cirkel'
+
+  };
+
+  return labels[tool] ||
+    'Ritobjekt';
+
+}
+
+
+/* ============================================================
+   DRAWING NODE
+   ============================================================ */
+
+function addDrawingNode(
+  object
+) {
+
+  let node = null;
+
+  const common = {
+
+    stroke:
+      object.color ||
+      '#2563eb',
+
+    strokeWidth:
+      object.strokeWidth ||
+      3,
+
+    opacity:
+      object.opacity ??
+      1,
+
+    dash:
+      object.dashed
+        ? [8, 6]
+        : [],
+
+    lineCap:
+      'round',
+
+    lineJoin:
+      'round'
+
+  };
+
+
+  if (
+    object.type === 'line' ||
+    object.type === 'path' ||
+    object.type === 'freehand'
+  ) {
+
+    node =
+      new Konva.Line({
+
+        points:
+          object.points || [],
+
+        ...common,
+
+        tension:
+          object.type === 'path' ||
+          object.type === 'freehand'
+            ? 0.15
+            : 0
+
+      });
+
+  }
+
+
+  if (
+    object.type === 'arrow'
+  ) {
+
+    node =
+      new Konva.Arrow({
+
+        points:
+          object.points || [],
+
+        ...common,
+
+        fill:
+          object.color ||
+          '#2563eb',
+
+        pointerLength:
+          10,
+
+        pointerWidth:
+          10
+
+      });
+
+  }
+
+
+  if (
+    object.type === 'rect' ||
+    object.type === 'area'
+  ) {
+
+    node =
+      new Konva.Rect({
+
+        x:
+          object.x || 0,
+
+        y:
+          object.y || 0,
+
+        width:
+          object.width || 0,
+
+        height:
+          object.height || 0,
+
+        ...common,
+
+        fill:
+          hexToRgba(
+            object.color ||
+            '#2563eb',
+            object.type === 'area'
+              ? 0.16
+              : 0.06
+          )
+
+      });
+
+  }
+
+
+  if (
+    object.type === 'circle'
+  ) {
+
+    node =
+      new Konva.Circle({
+
+        x:
+          object.x || 0,
+
+        y:
+          object.y || 0,
+
+        radius:
+          object.radius || 0,
+
+        ...common,
+
+        fill:
+          hexToRgba(
+            object.color ||
+            '#2563eb',
+            0.08
+          )
+
+      });
+
+  }
+
+
+  if (!node) return;
+
+  node.setAttr(
+    'objectId',
+    object.id
+  );
+
+  node.on(
+    'click tap',
+    event => {
+
+      event.cancelBubble = true;
+
+      selectObject(
+        object.id
+      );
+
+    }
+  );
+
+  state.layers.objects.add(
+    node
+  );
+
+}
+
+
+/* ============================================================
+   SELECTION
+   ============================================================ */
+
+function selectObject(
+  id
+) {
+
+  state.selectedObject =
+    id;
+
+  renderSelection();
+
+  renderProperties();
+
+  renderObjectList();
+
+}
+
+
+function clearSelection() {
+
+  state.selectedObject =
+    null;
+
+  renderSelection();
+
+  renderProperties();
+
+  renderObjectList();
+
+}
+
+
+function renderSelection() {
+
+  const layer =
+    state.layers.selection;
+
+  if (!layer) return;
+
+  layer.destroyChildren();
+
+  if (!state.selectedObject) {
+
+    layer.batchDraw();
+
+    return;
+
+  }
+
+  const object =
+    state.currentOp?.objects.find(
+      item =>
+        item.id ===
+        state.selectedObject
+    );
+
+  if (!object) {
+
+    layer.batchDraw();
+
+    return;
+
+  }
+
+  const node =
+    findNodeByObjectId(
+      object.id
+    );
+
+  if (!node) {
+
+    layer.batchDraw();
+
+    return;
+
+  }
+
+  const box =
+    node.getClientRect();
+
+  const rect =
+    new Konva.Rect({
+
+      x:
+        box.x - 5,
+
+      y:
+        box.y - 5,
+
+      width:
+        box.width + 10,
+
+      height:
+        box.height + 10,
+
+      stroke:
+        '#60a5fa',
+
+      strokeWidth:
+        1,
+
+      dash:
+        [5, 4],
+
+      listening:
+        false
+
+    });
+
+  layer.add(
+    rect
+  );
+
+  layer.batchDraw();
+
+}
+
+
+function findNodeByObjectId(
+  id
+) {
+
+  if (!state.layers.objects) {
+
+    return null;
+
+  }
+
+  let found = null;
+
+  state.layers.objects.find(
+    node => {
+
+      if (
+        node.getAttr(
+          'objectId'
+        ) === id
+      ) {
+
+        found = node;
+
+        return true;
+
+      }
+
+      return false;
+
+    }
+  );
+
+  return found;
+
+}
+
+
+/* ============================================================
+   RENDER OBJECTS
+   ============================================================ */
+
+function renderOperationObjects() {
+
+  if (!state.currentOp) return;
+
+  if (!state.layers.objects) return;
+
+  state.layers.objects.destroyChildren();
+
+  state.currentOp.objects.forEach(
+    object => {
+
+      if (
+        object.type ===
+        'symbol'
+      ) {
+
+        addSymbolNode(
+          object
+        );
+
+      } else if (
+        object.type ===
+        'text'
+      ) {
+
+        addTextNode(
+          object
+        );
+
+      } else {
+
+        addDrawingNode(
+          object
+        );
+
+      }
+
+    }
+  );
+
+  state.layers.objects.batchDraw();
+
+  renderObjectList();
+
+}
+
+
+function renderObjectList() {
+
+  const list =
+    $('#objects-list');
+
+  const count =
+    $('#object-count');
+
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  const objects =
+    state.currentOp?.objects ||
+    [];
+
+  if (count) {
+
+    count.textContent =
+      objects.length;
+
+  }
+
+  if (!objects.length) {
+
+    list.innerHTML = `
+      <div class="list-empty">
+        Inga objekt placerade på kartan.
+      </div>
+    `;
+
+    return;
+
+  }
+
+  objects.forEach(
+    object => {
+
+      const item =
+        document.createElement(
+          'div'
+        );
+
+      item.className =
+        'object-item';
+
+      if (
+        object.id ===
+        state.selectedObject
+      ) {
+
+        item.classList.add(
+          'selected'
+        );
+
+      }
+
+      const icon =
+        object.type === 'symbol'
+          ? (
+              SYMBOLS[
+                object.symbol
+              ]?.short ||
+              '?'
+            )
+          : (
+              object.type === 'text'
+                ? 'T'
+                : '✎'
+            );
+
+      const title =
+        object.name ||
+        SYMBOLS[
+          object.symbol
+        ]?.label ||
+        drawingToolLabel(
+          object.type
+        ) ||
+        'Objekt';
+
+      item.innerHTML = `
+
+        <div class="object-icon">
+          ${escapeHtml(icon)}
+        </div>
+
+        <div class="object-info">
+
+          <div class="object-name">
+            ${escapeHtml(title)}
+          </div>
+
+          <div class="object-type">
+            ${escapeHtml(
+              object.type
+            )}
+          </div>
+
+        </div>
+
+        <div class="object-actions">
+
+          <button
+            class="object-action"
+            data-object-action="edit"
+            title="Redigera"
+          >
+            ✎
+          </button>
+
+          <button
+            class="object-action"
+            data-object-action="delete"
+            title="Ta bort"
+          >
+            ×
+          </button>
+
+        </div>
+      `;
+
+      item.addEventListener(
+        'click',
+        event => {
+
+          const action =
+            event.target.closest(
+              '[data-object-action]'
+            );
+
+          if (action) {
+
+            event.stopPropagation();
+
+            if (
+              action.dataset.objectAction ===
+              'edit'
+            ) {
+
+              editObject(
+                object.id
+              );
+
+            }
+
+            if (
+              action.dataset.objectAction ===
+              'delete'
+            ) {
+
+              deleteObject(
+                object.id
+              );
+
+            }
+
+            return;
+
+          }
+
+          selectObject(
+            object.id
+          );
+
+        }
+      );
+
+      list.appendChild(
+        item
+      );
+
+    }
+  );
+
+}
+
+
+/* ============================================================
+   PROPERTIES
+   ============================================================ */
+
+function renderProperties() {
+
+  const container =
+    $('#props-content');
+
+  if (!container) return;
+
+  const object =
+    state.currentOp?.objects.find(
+      item =>
+        item.id ===
+        state.selectedObject
+    );
+
+  if (!object) {
+
+    container.innerHTML = `
+
+      <div class="empty-panel">
+
+        <div class="empty-panel-icon">
+          ◇
+        </div>
+
+        <strong>
+          Inget objekt markerat
+        </strong>
+
+        <span>
+          Markera ett objekt på kartan för att visa dess egenskaper.
+        </span>
+
+      </div>
+
+    `;
+
+    return;
+
+  }
+
+  const label =
+    object.type === 'symbol'
+      ? (
+          SYMBOLS[
+            object.symbol
+          ]?.label ||
+          object.name
+        )
+      : object.name;
+
+  container.innerHTML = `
+
+    <div class="property-grid">
+
+      <div class="property-field full">
+
+        <label>
+          NAMN
+        </label>
+
+        <input
+          id="property-name"
+          value="${escapeHtml(
+            object.name || label || ''
+          )}"
+        >
+
+      </div>
+
+
+      <div class="property-field">
+
+        <label>
+          TYP
+        </label>
+
+        <input
+          value="${escapeHtml(
+            object.type || ''
+          )}"
+          disabled
+        >
+
+      </div>
+
+
+      ${
+        object.type === 'symbol'
+          ? `
+            <div class="property-field">
+
+              <label>
+                SYMBOL
+              </label>
+
+              <input
+                value="${escapeHtml(
+                  SYMBOLS[
+                    object.symbol
+                  ]?.label ||
+                  object.symbol ||
+                  ''
+                )}"
+                disabled
+              >
+
+            </div>
+          `
+          : ''
+      }
+
+
+      <div class="property-field full">
+
+        <label>
+          BESKRIVNING
+        </label>
+
+        <textarea
+          id="property-description"
+        >${escapeHtml(
+          object.description || ''
+        )}</textarea>
+
+      </div>
+
+    </div>
+
+    <button
+      id="property-save"
+      class="btn btn-primary property-save"
+    >
+      SPARA EGENSKAPER
+    </button>
+
+  `;
+
+  $('#property-save')?.addEventListener(
+    'click',
+    () => {
+
+      const name =
+        $('#property-name')?.value.trim();
+
+      const description =
+        $('#property-description')?.value.trim();
+
+      object.name =
+        name ||
+        label ||
+        'Objekt';
+
+      object.description =
+        description || '';
+
+      pushHistory();
+
+      scheduleSave();
+
+      renderProperties();
+
+      renderObjectList();
+
+      toast(
+        'Egenskaper sparade.'
+      );
+
+    }
+  );
+
+}
+
+
+/* ============================================================
+   EDIT OBJECT MODAL
+   ============================================================ */
+
+function editObject(
+  id
+) {
+
+  const object =
+    state.currentOp?.objects.find(
+      item =>
+        item.id === id
+    );
+
+  if (!object) return;
+
+  state.editingObjectId =
+    id;
+
+  const name =
+    $('#edit-obj-name');
+
+  const description =
+    $('#edit-obj-desc');
+
+  if (name) {
+
+    name.value =
+      object.name || '';
+
+  }
+
+  if (description) {
+
+    description.value =
+      object.description || '';
+
+  }
+
+  showModal(
+    'edit-object-modal'
+  );
+
+}
+
+
+function saveEditedObject() {
+
+  const object =
+    state.currentOp?.objects.find(
+      item =>
+        item.id ===
+        state.editingObjectId
+    );
+
+  if (!object) {
+
+    closeModal(
+      'edit-object-modal'
+    );
+
+    return;
+
+  }
+
+  object.name =
+    $('#edit-obj-name')?.value.trim() ||
+    object.name;
+
+  object.description =
+    $('#edit-obj-desc')?.value.trim() ||
+    '';
+
+  closeModal(
+    'edit-object-modal'
+  );
+
+  pushHistory();
+
+  scheduleSave();
+
+  renderObjectList();
+
+  renderProperties();
+
+  toast(
+    'Objekt uppdaterat.'
+  );
+
+}
+
+
+function deleteObject(
+  id
+) {
+
+  const index =
+    state.currentOp?.objects.findIndex(
+      object =>
+        object.id === id
+    );
+
+  if (
+    index === undefined ||
+    index < 0
+  ) {
+
+    return;
+
+  }
+
+  state.currentOp.objects.splice(
+    index,
+    1
+  );
+
+  if (
+    state.selectedObject === id
+  ) {
+
+    state.selectedObject = null;
+
+  }
+
+  const node =
+    findNodeByObjectId(
+      id
+    );
+
+  if (node) {
+
+    node.destroy();
+
+  }
+
+  pushHistory();
+
+  scheduleSave();
+
+  renderObjectList();
+
+  renderProperties();
+
+  renderSelection();
+
+  toast(
+    'Objekt borttaget.'
+  );
+
+}
+
+
+/* ============================================================
+   MAP
+   ============================================================ */
+
+function loadMapFromData(
+  data
+) {
+
+  if (!data) {
+
+    clearMap();
+
+    return;
+
+  }
+
+  state.mapLocked =
+    Boolean(
+      state.currentOp?.mapLocked
+    );
+
+  const image =
+    new Image();
+
+  image.onload = () => {
+
+    state.mapImage =
+      image;
+
+    drawMapImage();
+
+    updateMapUI();
+
+  };
+
+  image.onerror = () => {
+
+    toast(
+      'Kartan kunde inte läsas.'
+    );
+
+    clearMap();
+
+  };
+
+  image.src =
+    data.data ||
+    data.src ||
+    data;
+
+}
+
+
+function drawMapImage() {
+
+  if (
+    !state.stage ||
+    !state.layers.map ||
+    !state.mapImage
+  ) {
+
+    return;
+
+  }
+
+  state.layers.map.destroyChildren();
+
+  const image =
+    state.mapImage;
+
+  const stageWidth =
+    state.stage.width();
+
+  const stageHeight =
+    state.stage.height();
+
+  const imageRatio =
+    image.width /
+    image.height;
+
+  const stageRatio =
+    stageWidth /
+    stageHeight;
+
+  let width;
+  let height;
+
+  if (
+    imageRatio >
+    stageRatio
+  ) {
+
+    width =
+      stageWidth * 0.9;
+
+    height =
+      width /
+      imageRatio;
+
+  } else {
+
+    height =
+      stageHeight * 0.9;
+
+    width =
+      height *
+      imageRatio;
+
+  }
+
+  const x =
+    (stageWidth - width) / 2;
+
+  const y =
+    (stageHeight - height) / 2;
+
+  const node =
+    new Konva.Image({
+
+      image,
+
+      x,
+
+      y,
+
+      width,
+
+      height,
+
+      listening:
+        false,
+
+      opacity:
+        0.96
+
+    });
+
+  state.layers.map.add(
+    node
+  );
+
+  state.layers.map.batchDraw();
+
+  renderOperationObjects();
+
+}
+
+
+function redrawMap() {
+
+  if (
+    state.mapImage
+  ) {
+
+    drawMapImage();
+
+  }
+
+  renderSelection();
+
+}
+
+
+function clearMap() {
+
+  state.mapImage = null;
+
+  if (
+    state.layers.map
+  ) {
+
+    state.layers.map.destroyChildren();
+
+    state.layers.map.batchDraw();
+
+  }
+
+  updateMapUI();
+
+}
+
+
+function updateMapUI() {
+
+  const status =
+    $('#map-status');
+
+  const upload =
+    $('#btn-upload-map');
+
+  const change =
+    $('#btn-change-map');
+
+  const lock =
+    $('#btn-lock-map');
+
+  const empty =
+    $('#map-empty-state');
+
+  if (state.mapImage) {
+
+    if (status) {
+
+      status.textContent =
+        state.mapLocked
+          ? 'Karta låst'
+          : 'Karta aktiv';
+
+    }
+
+    if (upload) hide(upload);
+
+    if (change) show(change);
+
+    if (lock) {
+
+      lock.textContent =
+        state.mapLocked
+          ? 'LÅS UPP KARTA'
+          : 'LÅS KARTA';
+
+    }
+
+    if (empty) hide(empty);
+
+  } else {
+
+    if (status) {
+
+      status.textContent =
+        'Ingen karta uppladdad';
+
+    }
+
+    if (upload) show(upload);
+
+    if (change) hide(change);
+
+    if (lock) {
+
+      lock.textContent =
+        'LÅS KARTA';
+
+    }
+
+    if (empty) show(empty);
+
+  }
+
+}
+
+
+/* ============================================================
+   MAP UPLOAD
+   ============================================================ */
+
+function handleMapUpload(
+  event
+) {
+
+  const file =
+    event.target.files?.[0];
+
+  if (!file) return;
+
+  if (state.mapLocked) {
+
+    toast(
+      'Lås upp kartan innan du byter den.'
+    );
+
+    event.target.value = '';
+
+    return;
+
+  }
+
+  const reader =
+    new FileReader();
+
+  reader.onload = () => {
+
+    state.currentOp.map = {
+
+      name:
+        file.name,
+
+      type:
+        file.type,
+
+      data:
+        reader.result
+
+    };
+
+    state.currentOp.mapLocked =
+      false;
+
+    state.mapLocked =
+      false;
+
+    loadMapFromData(
+      state.currentOp.map
+    );
+
+    pushHistory();
+
+    scheduleSave();
+
+    toast(
+      'Karta uppladdad.'
+    );
+
+  };
+
+  reader.readAsDataURL(
+    file
+  );
+
+  event.target.value = '';
+
+}
+
+
+/* ============================================================
+   LOCK MAP
+   ============================================================ */
+
+function toggleMapLock() {
+
+  if (!state.mapImage) {
+
+    toast(
+      'Ladda upp en karta först.'
+    );
+
+    return;
+
+  }
+
+  state.mapLocked =
+    !state.mapLocked;
+
+  state.currentOp.mapLocked =
+    state.mapLocked;
+
+  if (
+    state.layers.objects
+  ) {
+
+    state.layers.objects.children.forEach(
+      node => {
+
+        if (
+          node.draggable
+        ) {
+
+          node.draggable(
+            !state.mapLocked
+          );
+
+        }
+
+      }
+    );
+
+  }
+
+  updateMapUI();
+
+  scheduleSave();
+
+  toast(
+    state.mapLocked
+      ? 'Kartan är låst.'
+      : 'Kartan är upplåst.'
+  );
+
+}
+
+
+/* ============================================================
+   ZOOM
+   ============================================================ */
+
+function setZoom(
+  value
+) {
+
+  state.zoom =
+    Math.max(
+      0.25,
+      Math.min(
+        3,
+        value
+      )
+    );
+
+  const stage =
+    state.stage;
+
+  if (!stage) return;
+
+  const center = {
+    x:
+      stage.width() / 2,
+
+    y:
+      stage.height() / 2
+  };
+
+  const oldScale =
+    stage.scaleX();
+
+  const scale =
+    state.zoom;
+
+  const mousePointTo =
+    {
+      x:
+        (center.x -
+          stage.x()) /
+        oldScale,
+
+      y:
+        (center.y -
+          stage.y()) /
+        oldScale
+    };
+
+  stage.scale({
+    x:
+      scale,
+
+    y:
+      scale
+  });
+
+  stage.position({
+    x:
+      center.x -
+      mousePointTo.x *
+        scale,
+
+    y:
+      center.y -
+      mousePointTo.y *
+        scale
+  });
+
+  updateZoomDisplay();
+
+}
+
+
+function updateZoomDisplay() {
+
+  const display =
+    $('.zoom-display');
+
+  if (display) {
+
+    display.textContent =
+      `${Math.round(
+        state.zoom * 100
+      )}%`;
+
+  }
+
+  const coords =
+    $('#coords-display');
+
+  if (coords) {
+
+    const match =
+      coords.textContent;
+
+    if (match) {
+
+      coords.innerHTML =
+        coords.innerHTML.replace(
+          /ZOOM:\s*\d+%/,
+          `ZOOM: ${Math.round(
+            state.zoom * 100
+          )}%`
+        );
+
+    }
+
+  }
+
+}
+
+
+function handleWheel(
+  event
+) {
+
+  event.evt.preventDefault();
+
+  const oldScale =
+    state.stage.scaleX();
+
+  const pointer =
+    state.stage.getPointerPosition();
+
+  const scaleBy =
+    1.08;
+
+  const direction =
+    event.evt.deltaY > 0
+      ? -1
+      : 1;
+
+  const newScale =
+    direction > 0
+      ? oldScale * scaleBy
+      : oldScale / scaleBy;
+
+  state.zoom =
+    Math.max(
+      0.25,
+      Math.min(
+        3,
+        newScale
+      )
+    );
+
+  const mousePointTo =
+    {
+      x:
+        (pointer.x -
+          state.stage.x()) /
+        oldScale,
+
+      y:
+        (pointer.y -
+          state.stage.y()) /
+        oldScale
+    };
+
+  state.stage.scale({
+    x:
+      state.zoom,
+
+    y:
+      state.zoom
+  });
+
+  state.stage.position({
+    x:
+      pointer.x -
+      mousePointTo.x *
+        state.zoom,
+
+    y:
+      pointer.y -
+      mousePointTo.y *
+        state.zoom
+
+  });
+
+  updateZoomDisplay();
+
+}
+
+
+function resetZoom() {
+
+  if (!state.stage) return;
+
+  state.zoom = 1;
+
+  state.stage.scale({
+    x: 1,
+    y: 1
+  });
+
+  state.stage.position({
+    x: 0,
+    y: 0
+  });
+
+  updateZoomDisplay();
+
+}
+
+
+function fitMap() {
+
+  if (!state.stage || !state.mapImage) {
+
+    resetZoom();
+
+    return;
+
+  }
+
+  resetZoom();
+
+  const stageWidth =
+    state.stage.width();
+
+  const stageHeight =
+    state.stage.height();
+
+  const imageRatio =
+    state.mapImage.width /
+    state.mapImage.height;
+
+  const stageRatio =
+    stageWidth /
+    stageHeight;
+
+  let width;
+  let height;
+
+  if (
+    imageRatio >
+    stageRatio
+  ) {
+
+    width =
+      stageWidth * 0.9;
+
+    height =
+      width /
+      imageRatio;
+
+  } else {
+
+    height =
+      stageHeight * 0.9;
+
+    width =
+      height *
+      imageRatio;
+
+  }
+
+  const scale =
+    Math.min(
+      stageWidth / width,
+      stageHeight / height
+    );
+
+  state.zoom =
+    Math.max(
+      0.25,
+      Math.min(
+        3,
+        scale
+      )
+    );
+
+  state.stage.scale({
+    x:
+      state.zoom,
+
+    y:
+      state.zoom
+  });
+
+  updateZoomDisplay();
+
+}
+
+
+/* ============================================================
+   UNDO / REDO
+   ============================================================ */
+
+function getSerializableState() {
+
+  if (!state.currentOp) {
+
+    return null;
+
+  }
+
+  return structuredClone(
+    state.currentOp
+  );
+
+}
+
+
+function resetHistory() {
+
+  state.history = [];
+
+  state.historyIndex = -1;
+
+  const snapshot =
+    getSerializableState();
+
+  if (snapshot) {
+
+    state.history.push(
+      snapshot
+    );
+
+    state.historyIndex = 0;
+
+  }
+
+  updateUndoRedoUI();
+
+}
+
+
+function pushHistory() {
+
+  if (
+    state.suppressSave ||
+    !state.currentOp
+  ) {
+
+    return;
+
+  }
+
+  const snapshot =
+    getSerializableState();
+
+  state.history =
+    state.history.slice(
+      0,
+      state.historyIndex + 1
+    );
+
+  state.history.push(
+    snapshot
+  );
+
+  if (
+    state.history.length >
+    60
+  ) {
+
+    state.history.shift();
+
+  }
+
+  state.historyIndex =
+    state.history.length - 1;
+
+  updateUndoRedoUI();
+
+}
+
+
+function undo() {
+
+  if (
+    state.historyIndex <= 0
+  ) {
+
+    return;
+
+  }
+
+  state.historyIndex--;
+
+  restoreHistorySnapshot(
+    state.history[
+      state.historyIndex
+    ]
+  );
+
+}
+
+
+function redo() {
+
+  if (
+    state.historyIndex >=
+    state.history.length - 1
+  ) {
+
+    return;
+
+  }
+
+  state.historyIndex++;
+
+  restoreHistorySnapshot(
+    state.history[
+      state.historyIndex
+    ]
+  );
+
+}
+
+
+function restoreHistorySnapshot(
+  snapshot
+) {
+
+  if (!snapshot) return;
+
+  state.suppressSave =
+    true;
+
+  state.currentOp =
+    structuredClone(
+      snapshot
+    );
+
+  state.mapLocked =
+    Boolean(
+      state.currentOp.mapLocked
+    );
+
+  updateHeader();
+
+  renderOperationObjects();
+
+  renderGroups();
+
+  renderTimeline();
+
+  updateNotes();
+
+  if (state.currentOp.map) {
+
+    loadMapFromData(
+      state.currentOp.map
+    );
+
+  } else {
+
+    clearMap();
+
+  }
+
+  clearSelection();
+
+  updateMapUI();
+
+  state.suppressSave =
+    false;
+
+  scheduleSave();
+
+  updateUndoRedoUI();
+
+}
+
+
+function updateUndoRedoUI() {
+
+  const undoButton =
+    $('#btn-undo');
+
+  const redoButton =
+    $('#btn-redo');
+
+  if (undoButton) {
+
+    undoButton.disabled =
+      state.historyIndex <= 0;
+
+    undoButton.style.opacity =
+      undoButton.disabled
+        ? '0.4'
+        : '1';
+
+  }
+
+  if (redoButton) {
+
+    redoButton.disabled =
+      state.historyIndex >=
+      state.history.length - 1;
+
+    redoButton.style.opacity =
+      redoButton.disabled
+        ? '0.4'
+        : '1';
+
+  }
+
+}
+
+
+/* ============================================================
+   GROUPS
+   ============================================================ */
+
+function renderGroups() {
+
+  const list =
+    $('#groups-list');
+
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  const groups =
+    state.currentOp?.groups ||
+    [];
+
+  if (!groups.length) {
+
+    list.innerHTML = `
+      <div class="list-empty">
+        Inga insatsgrupper skapade.
+      </div>
+    `;
+
+    return;
+
+  }
+
+  groups.forEach(
+    (group, index) => {
+
+      const item =
+        document.createElement(
+          'div'
+        );
+
+      item.className =
+        'stack-item';
+
+      item.innerHTML = `
+
+        <div class="object-icon">
+          ${escapeHtml(
+            group.short ||
+            'G'
+          )}
+        </div>
+
+        <div class="stack-item-main">
+
+          <div class="stack-item-title">
+            ${escapeHtml(
+              group.name ||
+              `Grupp ${index + 1}`
+            )}
+          </div>
+
+          <div class="stack-item-sub">
+            ${escapeHtml(
+              group.role ||
+              'Ingen roll angiven'
+            )}
+          </div>
+
+        </div>
+
+        <button
+          class="object-action"
+          data-delete-group="${escapeHtml(
+            group.id
+          )}"
+        >
+          ×
+        </button>
+
+      `;
+
+      item.querySelector(
+        '[data-delete-group]'
+      )?.addEventListener(
+        'click',
+        event => {
+
+          event.stopPropagation();
+
+          deleteGroup(
+            group.id
+          );
+
+        }
+      );
+
+      list.appendChild(
+        item
+      );
+
+    }
+  );
+
+}
+
+
+function addGroup() {
+
+  if (!state.currentOp) return;
+
+  const name =
+    prompt(
+      'Gruppnamn:',
+      `Grupp ${
+        state.currentOp.groups.length + 1
+      }`
+    );
+
+  if (!name) return;
+
+  const role =
+    prompt(
+      'Roll:',
+      'Polis'
+    ) || '';
+
+  const short =
+    prompt(
+      'Kortnamn:',
+      'G'
+    ) || 'G';
+
+  state.currentOp.groups.push({
+
+    id:
+      crypto.randomUUID(),
+
+    name:
+      name.trim(),
+
+    role:
+      role.trim(),
+
+    short:
+      short.trim().slice(0, 3)
+
+  });
+
+  renderGroups();
+
+  pushHistory();
+
+  scheduleSave();
+
+}
+
+
+function deleteGroup(
+  id
+) {
+
+  const index =
+    state.currentOp.groups.findIndex(
+      group =>
+        group.id === id
+    );
+
+  if (index < 0) return;
+
+  state.currentOp.groups.splice(
+    index,
+    1
+  );
+
+  renderGroups();
+
+  pushHistory();
+
+  scheduleSave();
+
+}
+
+
+/* ============================================================
+   TIMELINE
+   ============================================================ */
+
+function renderTimeline() {
+
+  const list =
+    $('#timeline-list');
+
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  const timeline =
+    state.currentOp?.timeline ||
+    [];
+
+  if (!timeline.length) {
+
+    list.innerHTML = `
+      <div class="list-empty">
+        Inga händelser i tidslinjen.
+      </div>
+    `;
+
+    return;
+
+  }
+
+  timeline.forEach(
+    event => {
+
+      const item =
+        document.createElement(
+          'div'
+        );
+
+      item.className =
+        'stack-item';
+
+      item.innerHTML = `
+
+        <div class="stack-item-time">
+          ${escapeHtml(
+            event.time ||
+            '--:--'
+          )}
+        </div>
+
+        <div class="stack-item-main">
+
+          <div class="stack-item-title">
+            ${escapeHtml(
+              event.title ||
+              'Händelse'
+            )}
+          </div>
+
+          <div class="stack-item-sub">
+            ${escapeHtml(
+              event.description ||
+              ''
+            )}
+          </div>
+
+        </div>
+
+        <button
+          class="object-action"
+          data-delete-timeline="${escapeHtml(
+            event.id
+          )}"
+        >
+          ×
+        </button>
+
+      `;
+
+      item.querySelector(
+        '[data-delete-timeline]'
+      )?.addEventListener(
+        'click',
+        eventClick => {
+
+          eventClick.stopPropagation();
+
+          deleteTimelineEvent(
+            event.id
+          );
+
+        }
+      );
+
+      list.appendChild(
+        item
+      );
+
+    }
+  );
+
+}
+
+
+function addTimelineEvent() {
+
+  if (!state.currentOp) return;
+
+  const time =
+    prompt(
+      'Tid:',
+      '20:00'
+    );
+
+  if (!time) return;
+
+  const title =
+    prompt(
+      'Händelse:',
+      'Insats start'
+    );
+
+  if (!title) return;
+
+  const description =
+    prompt(
+      'Beskrivning:',
+      ''
+    ) || '';
+
+  state.currentOp.timeline.push({
+
+    id:
+      crypto.randomUUID(),
+
+    time:
+      time.trim(),
+
+    title:
+      title.trim(),
+
+    description:
+      description.trim()
+
+  });
+
+  state.currentOp.timeline.sort(
+    compareTimeline
+  );
+
+  renderTimeline();
+
+  pushHistory();
+
+  scheduleSave();
+
+}
+
+
+function compareTimeline(
+  a,
+  b
+) {
+
+  return String(
+    a.time || ''
+  ).localeCompare(
+    String(
+      b.time || ''
+    )
+  );
+
+}
+
+
+function deleteTimelineEvent(
+  id
+) {
+
+  const index =
+    state.currentOp.timeline.findIndex(
+      event =>
+        event.id === id
+    );
+
+  if (index < 0) return;
+
+  state.currentOp.timeline.splice(
+    index,
+    1
+  );
+
+  renderTimeline();
+
+  pushHistory();
+
+  scheduleSave();
+
+}
+
+
+/* ============================================================
+   NOTES
+   ============================================================ */
+
+function updateNotes() {
+
+  const textarea =
+    $('#op-notes-panel');
+
+  if (!textarea) return;
+
+  textarea.value =
+    state.currentOp?.notes ||
+    '';
+
+}
+
+
+function saveNotes() {
+
+  if (!state.currentOp) return;
+
+  const textarea =
+    $('#op-notes-panel');
+
+  if (!textarea) return;
+
+  state.currentOp.notes =
+    textarea.value;
+
+  scheduleSave();
+
+}
+
+
+/* ============================================================
+   SAVE
+   ============================================================ */
+
+function scheduleSave() {
+
+  if (
+    state.suppressSave ||
+    !state.currentOp
+  ) {
+
+    return;
+
+  }
+
+  clearTimeout(
+    state.saveTimer
+  );
+
+  state.saveTimer =
+    setTimeout(
+      () => {
+        saveCurrentOperation();
+      },
+      500
+    );
+
+}
+
+
+async function saveCurrentOperation() {
+
+  if (!state.currentOp) return;
+
+  state.currentOp.updatedAt =
+    new Date().toISOString();
+
+  try {
+
+    await dbPut(
+      state.currentOp
+    );
+
+    const index =
+      state.opsList.findIndex(
+        item =>
+          item.id ===
+          state.currentOp.id
+      );
+
+    if (index >= 0) {
+
+      state.opsList[index] =
+        structuredClone(
+          state.currentOp
+        );
+
+    } else {
+
+      state.opsList.unshift(
+        structuredClone(
+          state.currentOp
+        )
+      );
+
+    }
+
+    updateSaveIndicator();
+
+    if (currentUser) {
+
+      await saveToSupabase();
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      'Save failed:',
+      error
+    );
+
+    toast(
+      'Kunde inte spara operationen.'
+    );
+
+  }
+
+}
+
+
+function updateSaveIndicator() {
+
+  const indicator =
+    $('.save-indicator');
+
+  if (!indicator) return;
+
+  indicator.innerHTML = `
+    <span class="status-dot"></span>
+    <span>LOKALT SPARAD</span>
+  `;
+
+}
+
+
+/* ============================================================
+   SUPABASE SAVE
+   ============================================================ */
+
+async function saveToSupabase() {
+
+  if (
+    !currentUser ||
+    !state.currentOp
+  ) {
+
+    return;
+
+  }
+
+  try {
+
+    const payload = {
+
+      user_id:
+        currentUser.id,
+
+      operation_id:
+        state.currentOp.id,
+
+      data:
+        state.currentOp,
+
+      updated_at:
+        state.currentOp.updatedAt
+
+    };
+
+    const {
+      error
+    } =
+      await supabase
+        .from('operations')
+        .upsert(
+          payload,
+          {
+            onConflict:
+              'user_id,operation_id'
+          }
+        );
+
+    if (error) {
+
+      console.warn(
+        'Supabase save:',
+        error.message
+      );
+
+    }
+
+  } catch (error) {
+
+    console.warn(
+      'Supabase save failed:',
+      error
+    );
+
+  }
+
+}
+
+
+/* ============================================================
+   DELETE OPERATION
+   ============================================================ */
+
+function confirmDeleteOperation(
+  id
+) {
+
+  const operation =
+    state.opsList.find(
+      item =>
+        item.id === id
+    );
+
+  if (!operation) return;
+
+  $('#confirm-title').textContent =
+    'Ta bort operation?';
+
+  $('#confirm-message').textContent =
+    `Är du säker på att du vill ta bort "${operation.name}"? Detta går inte att ångra.`;
+
+  state.confirmAction =
+    async () => {
+
+      await dbDelete(
+        id
+      );
+
+      state.opsList =
+        state.opsList.filter(
+          item =>
+            item.id !== id
+        );
+
+      renderOperations();
+
+      closeModal(
+        'confirm-modal'
+      );
+
+      toast(
+        'Operationen har tagits bort.'
+      );
+
+    };
+
+  showModal(
+    'confirm-modal'
+  );
+
+}
+
+
+/* ============================================================
+   EXPORT PNG / JPG
+   ============================================================ */
+
+function exportImage(
+  format
+) {
+
+  if (!state.stage) return;
+
+  const oldSelection =
+    state.layers.selection
+      ?.visible();
+
+  if (
+    state.layers.selection
+  ) {
+
+    state.layers.selection.visible(
+      false
+    );
+
+  }
+
+  state.stage.toDataURL({
+
+    pixelRatio:
+      2,
+
+    mimeType:
+      format === 'jpg'
+        ? 'image/jpeg'
+        : 'image/png',
+
+    quality:
+      0.95,
+
+    callback:
+      dataURL => {
+
+        if (
+          state.layers.selection
+        ) {
+
+          state.layers.selection.visible(
+            oldSelection
+          );
+
+        }
+
+        const filename =
+          sanitizeFilename(
+            state.currentOp?.name ||
+            'erlc-operation'
+          );
+
+        downloadDataURL(
+          dataURL,
+          `${filename}.${format}`
+        );
+
+        toast(
+          `Kartan exporterades som ${format.toUpperCase()}.`
+        );
+
+      }
+
+  });
+
+}
+
+
+/* ============================================================
+   EXPORT ERLCPLAN
+   ============================================================ */
+
+function exportPlan() {
+
+  if (!state.currentOp) return;
+
+  const payload = {
+
+    format:
+      'erlcplan',
+
+    version:
+      1,
+
+    application:
+      'ER:LC Taktisk Planerare',
+
+    exportedAt:
+      new Date().toISOString(),
+
+    operation:
+      state.currentOp
+
+  };
+
+  const blob =
+    new Blob(
+      [
+        JSON.stringify(
+          payload,
+          null,
+          2
+        )
+      ],
+      {
+        type:
+          'application/json'
+      }
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob
+    );
+
+  const a =
+    document.createElement(
+      'a'
+    );
+
+  a.href =
+    url;
+
+  a.download =
+    `${sanitizeFilename(
+      state.currentOp.name
+    )}.erlcplan`;
+
+  a.click();
+
+  URL.revokeObjectURL(
+    url
+  );
+
+  toast(
+    'Operation exporterad.'
+  );
+
+}
+
+
+/* ============================================================
+   IMPORT ERLCPLAN
+   ============================================================ */
+
+async function importPlan(
+  event
+) {
+
+  const file =
+    event.target.files?.[0];
+
+  if (!file) return;
+
+  try {
+
+    const text =
+      await file.text();
+
+    const payload =
+      JSON.parse(
+        text
+      );
+
+    const operation =
+      payload.operation ||
+      payload;
+
+    if (
+      !operation ||
+      typeof operation !==
+      'object'
+    ) {
+
+      throw new Error(
+        'Ogiltig operationsfil.'
+      );
+
+    }
+
+    const imported =
+      createDefaultOperation(
+        operation
+      );
+
+    imported.id =
+      crypto.randomUUID();
+
+    imported.createdAt =
+      new Date().toISOString();
+
+    imported.updatedAt =
+      new Date().toISOString();
+
+    await dbPut(
+      imported
+    );
+
+    state.opsList.unshift(
+      imported
+    );
+
+    renderOperations();
+
+    toast(
+      'Operation importerad.'
+    );
+
+  } catch (error) {
+
+    console.error(error);
+
+    toast(
+      'Kunde inte importera filen.'
+    );
+
+  }
+
+  event.target.value = '';
+
+}
+
+
+/* ============================================================
+   DOWNLOAD HELPERS
+   ============================================================ */
+
+function downloadDataURL(
+  dataURL,
+  filename
+) {
+
+  const a =
+    document.createElement(
+      'a'
+    );
+
+  a.href =
+    dataURL;
+
+  a.download =
+    filename;
+
+  document.body.appendChild(
+    a
+  );
+
+  a.click();
+
+  a.remove();
+
+}
+
+
+function sanitizeFilename(
+  name
+) {
+
+  return String(
+    name || 'export'
+  )
+    .replace(
+      /[<>:"/\\|?*\x00-\x1F]/g,
+      '_'
+    )
+    .replace(
+      /\s+/g,
+      '_'
+    )
+    .slice(
+      0,
+      100
+    );
+
+}
+
+
+/* ============================================================
+   DRAW SETTINGS
+   ============================================================ */
+
+function getDrawColor(
+  fallback = '#2563eb'
+) {
+
+  return (
+    $('#draw-color')?.value ||
+    fallback
+  );
+
+}
+
+
+function getStrokeWidth() {
+
+  return Number(
+    $('#stroke-width')?.value ||
+    3
+  );
+
+}
+
+
+function getDrawOpacity() {
+
+  return (
+    Number(
+      $('#draw-opacity')?.value ||
+      100
+    ) / 100
+  );
+
+}
+
+
+function getDash() {
+
+  return $('#draw-dashed')?.checked
+    ? [8, 6]
+    : [];
+
+}
+
+
+function hexToRgba(
+  hex,
+  alpha
+) {
+
+  const value =
+    String(hex)
+      .replace(
+        '#',
+        ''
+      );
+
+  if (
+    value.length !== 6
+  ) {
+
+    return `rgba(37,99,235,${alpha})`;
+
+  }
+
+  const r =
+    parseInt(
+      value.slice(0, 2),
+      16
+    );
+
+  const g =
+    parseInt(
+      value.slice(2, 4),
+      16
+    );
+
+  const b =
+    parseInt(
+      value.slice(4, 6),
+      16
+    );
+
+  return `rgba(${r},${g},${b},${alpha})`;
+
+}
+
+
+/* ============================================================
+   KEYBOARD SHORTCUTS
+   ============================================================ */
+
+function handleKeyboard(
+  event
+) {
+
+  const target =
+    event.target;
+
+  const typing =
+    target &&
+    (
+      target.tagName ===
+        'INPUT' ||
+      target.tagName ===
+        'TEXTAREA' ||
+      target.tagName ===
+        'SELECT' ||
+      target.isContentEditable
+    );
+
+
+  if (
+    event.ctrlKey &&
+    event.key.toLowerCase() ===
+      'z'
+  ) {
+
+    if (typing) return;
+
+    event.preventDefault();
+
+    undo();
+
+    return;
+
+  }
+
+
+  if (
+    event.ctrlKey &&
+    event.key.toLowerCase() ===
+      'y'
+  ) {
+
+    if (typing) return;
+
+    event.preventDefault();
+
+    redo();
+
+    return;
+
+  }
+
+
+  if (typing) return;
+
+
+  if (
+    event.key ===
+    'Delete' ||
+    event.key ===
+    'Backspace'
+  ) {
+
+    if (
+      state.selectedObject
+    ) {
+
+      deleteObject(
+        state.selectedObject
+      );
+
+    }
+
+    return;
+
+  }
+
+
+  const key =
+    event.key.toLowerCase();
+
+  const shortcuts = {
+
+    v: 'select',
+
+    p: 'pan',
+
+    s: 'symbol',
+
+    t: 'text',
+
+    l: 'line',
+
+    a: 'arrow',
+
+    g: 'path',
+
+    f: 'freehand',
+
+    r: 'rect',
+
+    o: 'area',
+
+    c: 'circle'
+
+  };
+
+  if (
+    shortcuts[key]
+  ) {
+
+    setTool(
+      shortcuts[key]
+    );
+
+  }
+
+
+  if (
+    event.key ===
+    'Escape'
+  ) {
+
+    clearSelection();
+
+  }
+
+}
+
+
+/* ============================================================
+   EVENT BINDINGS
+   ============================================================ */
+
+function bindEvents() {
+
+  /* ------------------------------
+     AUTH
+  ------------------------------ */
+
+  $('#btn-login')?.addEventListener(
+    'click',
+    () => {
+
+      isLoginMode = true;
+
+      updateAuthModal();
+
+      showModal(
+        'auth-modal'
+      );
+
+    }
+  );
+
+
+  $('#auth-toggle')?.addEventListener(
+    'click',
+    event => {
+
+      event.preventDefault();
+
+      isLoginMode =
+        !isLoginMode;
+
+      updateAuthModal();
+
+    }
+  );
+
+
+  $('#btn-auth-submit')?.addEventListener(
+    'click',
+    submitAuth
+  );
+
+
+  $('#btn-logout')?.addEventListener(
+    'click',
+    logout
+  );
+
+
+  /* ------------------------------
+     START SCREEN
+  ------------------------------ */
+
+  $('#btn-new-op')?.addEventListener(
+    'click',
+    openNewOperationModal
+  );
+
+
+  $('#btn-open-op')?.addEventListener(
+    'click',
+    () => {
+
+      const section =
+        document.querySelector(
+          '.saved-ops-section'
+        );
+
+      section?.scrollIntoView({
+        behavior:
+          'smooth'
+      });
+
+    }
+  );
+
+
+  $('#new-op-form')?.addEventListener(
+    'submit',
+    createOperationFromForm
+  );
+
+
+  /* ------------------------------
+     EDITOR
+  ------------------------------ */
+
+  $('#btn-back-home')?.addEventListener(
+    'click',
+    closeEditor
+  );
+
+
+  $('#btn-save')?.addEventListener(
+    'click',
+    async () => {
+
+      await saveCurrentOperation();
+
+      toast(
+        'Operation sparad.'
+      );
+
+    }
+  );
+
+
+  $('#btn-undo')?.addEventListener(
+    'click',
+    undo
+  );
+
+
+  $('#btn-redo')?.addEventListener(
+    'click',
+    redo
+  );
+
+
+  $('#btn-zoom-in')?.addEventListener(
+    'click',
+    () => {
+
+      setZoom(
+        state.zoom * 1.15
+      );
+
+    }
+  );
+
+
+  $('#btn-zoom-out')?.addEventListener(
+    'click',
+    () => {
+
+      setZoom(
+        state.zoom / 1.15
+      );
+
+    }
+  );
+
+
+  $('#btn-zoom-reset')?.addEventListener(
+    'click',
+    resetZoom
+  );
+
+
+  $('#btn-zoom-fit')?.addEventListener(
+    'click',
+    fitMap
+  );
+
+
+  /* ------------------------------
+     EXPORT
+  ------------------------------ */
+
+  $('#btn-export-menu')?.addEventListener(
+    'click',
+    event => {
+
+      event.stopPropagation();
+
+      $('#export-dropdown')?.classList.toggle(
+        'hidden'
+      );
+
+    }
+  );
+
+
+  $$('[data-export]').forEach(
+    button => {
+
+      button.addEventListener(
+        'click',
+        () => {
+
+          hide(
+            $('#export-dropdown')
+          );
+
+          const type =
+            button.dataset.export;
+
+          if (type === 'png') {
+
+            exportImage(
+              'png'
+            );
+
+          }
+
+          if (type === 'jpg') {
+
+            exportImage(
+              'jpg'
+            );
+
+          }
+
+          if (
+            type ===
+            'erlcplan'
+          ) {
+
+            exportPlan();
+
+          }
+
+        }
+      );
+
+    }
+  );
+
+
+  $$('[data-import]').forEach(
+    button => {
+
+      button.addEventListener(
+        'click',
+        () => {
+
+          hide(
+            $('#export-dropdown')
+          );
+
+          $('#import-file')?.click();
+
+        }
+      );
+
+    }
+  );
+
+
+  $('#import-file')?.addEventListener(
+    'change',
+    importPlan
+  );
+
+
+  /* ------------------------------
+     MAP
+  ------------------------------ */
+
+  $('#btn-upload-map')?.addEventListener(
+    'click',
+    () => {
+
+      $('#map-upload')?.click();
+
+    }
+  );
+
+
+  $('#btn-empty-upload')?.addEventListener(
+    'click',
+    () => {
+
+      $('#map-upload')?.click();
+
+    }
+  );
+
+
+  $('#btn-change-map')?.addEventListener(
+    'click',
+    () => {
+
+      if (state.mapLocked) {
+
+        toast(
+          'Lås upp kartan först.'
+        );
+
+        return;
+
+      }
+
+      $('#map-upload')?.click();
+
+    }
+  );
+
+
+  $('#map-upload')?.addEventListener(
+    'change',
+    handleMapUpload
+  );
+
+
+  $('#btn-lock-map')?.addEventListener(
+    'click',
+    toggleMapLock
+  );
+
+
+  /* ------------------------------
+     TOOLS
+  ------------------------------ */
+
+  $$('.tool-btn').forEach(
+    button => {
+
+      button.addEventListener(
+        'click',
+        () => {
+
+          setTool(
+            button.dataset.tool
+          );
+
+        }
+      );
+
+    }
+  );
+
+
+  $$('.symbol-item').forEach(
+    button => {
+
+      button.addEventListener(
+        'click',
+        () => {
+
+          selectSymbol(
+            button.dataset.symbol
+          );
+
+          setTool(
+            'symbol'
+          );
+
+        }
+      );
+
+    }
+  );
+
+
+  /* ------------------------------
+     DRAW SETTINGS
+  ------------------------------ */
+
+  $('#stroke-width')?.addEventListener(
+    'input',
+    event => {
+
+      const output =
+        event.target.parentElement
+          ?.querySelector(
+            'output'
+          );
+
+      if (output) {
+
+        output.textContent =
+          event.target.value;
+
+      }
+
+    }
+  );
+
+
+  $('#draw-opacity')?.addEventListener(
+    'input',
+    event => {
+
+      const output =
+        event.target.parentElement
+          ?.querySelector(
+            'output'
+          );
+
+      if (output) {
+
+        output.textContent =
+          `${event.target.value}%`;
+
+      }
+
+    }
+  );
+
+
+  /* ------------------------------
+     GROUPS / TIMELINE
+  ------------------------------ */
+
+  $('#btn-add-group')?.addEventListener(
+    'click',
+    addGroup
+  );
+
+
+  $('#btn-add-timeline')?.addEventListener(
+    'click',
+    addTimelineEvent
+  );
+
+
+  $('#op-notes-panel')?.addEventListener(
+    'input',
+    saveNotes
+  );
+
+
+  /* ------------------------------
+     OBJECT EDIT
+  ------------------------------ */
+
+  $('#btn-edit-object-save')?.addEventListener(
+    'click',
+    saveEditedObject
+  );
+
+
+  $('#btn-delete-selected')?.addEventListener(
+    'click',
+    () => {
+
+      if (
+        state.selectedObject
+      ) {
+
+        deleteObject(
+          state.selectedObject
+        );
+
+      }
+
+    }
+  );
+
+
+  /* ------------------------------
+     CONFIRM
+  ------------------------------ */
+
+  $('#btn-confirm')?.addEventListener(
+    'click',
+    async () => {
+
+      if (
+        typeof state.confirmAction ===
+        'function'
+      ) {
+
+        await state.confirmAction();
+
+      }
+
+      state.confirmAction =
+        null;
+
+    }
+  );
+
+
+  /* ------------------------------
+     MODAL CLOSE BUTTONS
+  ------------------------------ */
+
+  $$('[data-close]').forEach(
+    button => {
+
+      button.addEventListener(
+        'click',
+        () => {
+
+          closeModal(
+            button.dataset.close
+          );
+
+        }
+      );
+
+    }
+  );
+
+
+  /* ------------------------------
+     MODAL BACKDROPS
+  ------------------------------ */
+
+  $$('.modal').forEach(
+    modal => {
+
+      modal
+        .querySelector(
+          '.modal-backdrop'
+        )
+        ?.addEventListener(
+          'click',
+          () => {
+
+            modal.classList.remove(
+              'active'
+            );
+
+          }
+        );
+
+    }
+  );
+
+
+  /* ------------------------------
+     GLOBAL CLICK
+  ------------------------------ */
+
+  document.addEventListener(
+    'click',
+    event => {
+
+      const dropdown =
+        $('#export-dropdown');
+
+      const exportButton =
+        $('#btn-export-menu');
+
+      if (
+        dropdown &&
+        !dropdown.contains(
+          event.target
+        ) &&
+        !exportButton?.contains(
+          event.target
+        )
+      ) {
+
+        hide(dropdown);
+
+      }
+
+    }
+  );
+
+
+  /* ------------------------------
+     KEYBOARD
+  ------------------------------ */
+
+  document.addEventListener(
+    'keydown',
+    handleKeyboard
+  );
+
+
+  /* ------------------------------
+     WINDOW
+  ------------------------------ */
+
+  window.addEventListener(
+    'beforeunload',
+    () => {
+
+      if (
+        state.currentOp
+      ) {
+
+        saveCurrentOperation();
+
+      }
+
+    }
+  );
+
+}
+
+
+/* ============================================================
+   AUTH MODAL UI
+   ============================================================ */
+
+function updateAuthModal() {
+
+  const title =
+    $('#auth-title');
+
+  const submit =
+    $('#btn-auth-submit');
+
+  const switchText =
+    $('#auth-switch-text');
+
+  const toggle =
+    $('#auth-toggle');
+
+  if (isLoginMode) {
+
+    if (title) {
+
+      title.textContent =
+        'Logga in';
+
+    }
+
+    if (submit) {
+
+      submit.textContent =
+        'Logga in';
+
+    }
+
+    if (switchText) {
+
+      switchText.textContent =
+        'Har du inget konto?';
+
+    }
+
+    if (toggle) {
+
+      toggle.textContent =
+        'Skapa konto';
+
+    }
+
+  } else {
+
+    if (title) {
+
+      title.textContent =
+        'Skapa konto';
+
+    }
+
+    if (submit) {
+
+      submit.textContent =
+        'Skapa konto';
+
+    }
+
+    if (switchText) {
+
+      switchText.textContent =
+        'Har du redan ett konto?';
+
+    }
+
+    if (toggle) {
+
+      toggle.textContent =
+        'Logga in';
+
+    }
+
+  }
+
+}
+
+
+/* ============================================================
+   INITIALIZATION
+   ============================================================ */
+
+async function init() {
+
+  bindEvents();
+
+  updateAuthModal();
+
+  try {
+
+    await initDB();
+
+  } catch (error) {
+
+    console.error(
+      'IndexedDB initialization failed:',
+      error
+    );
+
+    toast(
+      'Lokal lagring kunde inte startas.'
+    );
+
+  }
+
+  await loadOperations();
+
+  await checkAuth();
+
+  setTool(
+    'select'
+  );
+
+  selectSymbol(
+    'police'
+  );
+
+}
+
+
+if (
+  document.readyState ===
+  'loading'
+) {
+
+  document.addEventListener(
+    'DOMContentLoaded',
+    init
+  );
+
+} else {
+
+  init();
+
+}
+
 })();
