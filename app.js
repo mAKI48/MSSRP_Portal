@@ -10,7 +10,7 @@
   // ========== SUPABASE ==========
   // ← PASTE YOUR VALUES HERE
   const SUPABASE_URL = 'https://xxxxx.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
+  const SUPABASE_ANON_KEY = 'sb_publishable_oclE6KnOIjMIuXCyKaFRiQ_Y8WZYgpo';
 
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   let currentUser = null;
