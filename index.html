@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ER:LC Taktisk Planerare</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/konva@9.3.6/konva.min.js"></script>
+</head>
+<body>
+  <!-- STARTSIDA -->
+  <div id="start-screen" class="screen active">
+    <header class="start-header">
+      <div class="logo-area">
+        <div class="logo-icon">ER</div>
+        <div>
+          <h1>ER:LC TAKTISK PLANERARE</h1>
+          <p class="subtitle">Operativt planeringssystem för Roblox RP</p>
+        </div>
+      </div>
+      <p class="disclaimer">Inofficiellt planeringsverktyg för Roblox-rollspel. Inte kopplat till Roblox eller Emergency Response: Liberty County.</p>
+    </header>
+
+    <main class="start-main">
+      <div class="action-buttons">
+        <button id="btn-new-op" class="btn btn-primary btn-large">
+          <span class="btn-icon">+</span>
+          NY OPERATION
+        </button>
+        <button id="btn-open-op" class="btn btn-secondary btn-large">
+          <span class="btn-icon">📂</span>
+          ÖPPNA OPERATION
+        </button>
+      </div>
+
+      <section class="saved-ops-section">
+        <h2>Sparade operationer</h2>
+        <div id="saved-ops-list" class="saved-ops-grid">
+        </div>
+        <p id="no-ops-msg" class="no-ops">Inga sparade operationer ännu. Skapa en ny för att komma igång.</p>
+      </section>
+    </main>
+  </div>
+
+  <!-- NY OPERATION MODAL -->
+  <div id="new-op-modal" class="modal">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h2>Skapa ny operation</h2>
+        <button class="modal-close" data-close="new-op-modal">&times;</button>
+      </div>
+      <form id="new-op-form" class="modal-body">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="op-name">Operationsnamn *</label>
+            <input type="text" id="op-name" required placeholder="t.ex. Operation Nightfall">
+          </div>
+          <div class="form-group">
+            <label for="op-number">Operationsnummer</label>
+            <input type="text" id="op-number" placeholder="t.ex. OP-2026-001">
+          </div>
+          <div class="form-group">
+            <label for="op-date">Datum</label>
+            <input type="date" id="op-date">
+          </div>
+          <div class="form-group">
+            <label for="op-location">Plats</label>
+            <input type="text" id="op-location" placeholder="t.ex. Liberty County">
+          </div>
+          <div class="form-group">
+            <label for="op-commander">Insatschef</label>
+            <input type="text" id="op-commander" placeholder="Namn">
+          </div>
+          <div class="form-group">
+            <label for="op-leader">Insatsledare</label>
+            <input type="text" id="op-leader" placeholder="Namn">
+          </div>
+          <div class="form-group">
+            <label for="op-status">Status</label>
+            <select id="op-status">
+              <option value="PLANERING">PLANERING</option>
+              <option value="REDO">REDO</option>
+              <option value="AKTIV">AKTIV</option>
+              <option value="AVSLUTAD">AVSLUTAD</option>
+              <option value="AVBRUTEN">AVBRUTEN</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="op-priority">Prioritet</label>
+            <select id="op-priority">
+              <option value="LÅG">LÅG</option>
+              <option value="NORMAL" selected>NORMAL</option>
+              <option value="HÖG">HÖG</option>
+              <option value="AKUT">AKUT</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="op-threat">Hotnivå</label>
+            <select id="op-threat">
+              <option value="LÅG">LÅG</option>
+              <option value="MEDEL">MEDEL</option>
+              <option value="HÖG">HÖG</option>
+              <option value="KRITISK">KRITISK</option>
+            </select>
+          </div>
+          <div class="form-group full-width">
+            <label for="op-objective">Huvudmål</label>
+            <input type="text" id="op-objective" placeholder="t.ex. Högriskgripande">
+          </div>
+          <div class="form-group full-width">
+            <label for="op-notes">Anteckningar</label>
+            <textarea id="op-notes" rows="3" placeholder="Kort beskrivning..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-close="new-op-modal">Avbryt</button>
+          <button type="submit" class="btn btn-primary">Skapa operation</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- HUVUDAPP -->
+  <div id="app-screen" class="screen">
+    <header class="app-header">
+      <div class="header-left">
+        <button id="btn-back-home" class="btn btn-icon" title="Tillbaka till startsida">←</button>
+        <div class="op-info">
+          <h1 id="header-op-name">Operation</h1>
+          <span id="header-op-meta" class="op-meta"></span>
+        </div>
+      </div>
+      <div class="header-center">
+        <div class="toolbar-group">
+          <button id="btn-undo" class="btn btn-tool" title="Ångra (Ctrl+Z)">↶</button>
+          <button id="btn-redo" class="btn btn-tool" title="Gör om (Ctrl+Y)">↷</button>
+        </div>
+        <div class="toolbar-group">
+          <button id="btn-zoom-in" class="btn btn-tool" title="Zooma in">+</button>
+          <button id="btn-zoom-out" class="btn btn-tool" title="Zooma ut">−</button>
+          <button id="btn-zoom-fit" class="btn btn-tool" title="Anpassa till skärm">⊡</button>
+          <button id="btn-zoom-reset" class="btn btn-tool" title="100%">1:1</button>
+        </div>
+      </div>
+      <div class="header-right">
+        <button id="btn-save" class="btn btn-primary btn-sm">SPARA</button>
+        <button id="btn-export-menu" class="btn btn-secondary btn-sm">EXPORTERA ▾</button>
+        <div id="export-dropdown" class="dropdown-menu hidden">
+          <button data-export="png">Exportera PNG</button>
+          <button data-export="jpg">Exportera JPG</button>
+          <button data-export="erlcplan">Exportera .erlcplan</button>
+          <button data-import="erlcplan">Importera .erlcplan</button>
+        </div>
+        <input type="file" id="import-file" accept=".erlcplan,.json" class="hidden">
+      </div>
+    </header>
+
+    <div class="app-body">
+      <aside class="sidebar sidebar-left">
+        <div class="panel">
+          <h3 class="panel-title">Verktyg</h3>
+          <div class="tool-grid" id="tool-grid">
+            <button class="tool-btn active" data-tool="select" title="Markera">
+              <span>⬚</span><small>Markera</small>
+            </button>
+            <button class="tool-btn" data-tool="pan" title="Panorera">
+              <span>✋</span><small>Panorera</small>
+            </button>
+            <button class="tool-btn" data-tool="symbol" title="Symbol">
+              <span>●</span><small>Symbol</small>
+            </button>
+            <button class="tool-btn" data-tool="line" title="Linje">
+              <span>／</span><small>Linje</small>
+            </button>
+            <button class="tool-btn" data-tool="arrow" title="Pil">
+              <span>→</span><small>Pil</small>
+            </button>
+            <button class="tool-btn" data-tool="path" title="Rutt">
+              <span>⤳</span><small>Rutt</small>
+            </button>
+            <button class="tool-btn" data-tool="freehand" title="Frihand">
+              <span>✎</span><small>Frihand</small>
+            </button>
+            <button class="tool-btn" data-tool="rect" title="Rektangel">
+              <span>□</span><small>Rektangel</small>
+            </button>
+            <button class="tool-btn" data-tool="circle" title="Cirkel">
+              <span>○</span><small>Cirkel</small>
+            </button>
+            <button class="tool-btn" data-tool="polygon" title="Polygon">
+              <span>△</span><small>Polygon</small>
+            </button>
+            <button class="tool-btn" data-tool="area" title="Område">
+              <span>▣</span><small>Område</small>
+            </button>
+            <button class="tool-btn" data-tool="text" title="Text">
+              <span>T</span><small>Text</small>
+            </button>
+          </div>
+        </div>
+
+        <div class="panel" id="symbol-panel">
+          <h3 class="panel-title">Taktiska symboler</h3>
+          <div class="symbol-categories">
+            <details open>
+              <summary>POLIS / INSATS</summary>
+              <div class="symbol-list" data-category="police">
+                <button class="symbol-item" data-symbol="police" data-color="#2563eb"><span class="sym-icon">👮</span> Polis</button>
+                <button class="symbol-item" data-symbol="patrol" data-color="#3b82f6"><span class="sym-icon">🚔</span> Patrull</button>
+                <button class="symbol-item" data-symbol="commander" data-color="#1d4ed8"><span class="sym-icon">★</span> Befäl</button>
+                <button class="symbol-item" data-symbol="op-chief" data-color="#1e40af"><span class="sym-icon">★★</span> Insatschef</button>
+                <button class="symbol-item" data-symbol="operator" data-color="#60a5fa"><span class="sym-icon">●</span> Operatör</button>
+                <button class="symbol-item" data-symbol="ni" data-color="#818cf8"><span class="sym-icon">◆</span> NI-operatör</button>
+                <button class="symbol-item" data-symbol="k9" data-color="#a78bfa"><span class="sym-icon">🐕</span> K9</button>
+                <button class="symbol-item" data-symbol="medic" data-color="#34d399"><span class="sym-icon">✚</span> Sjukvårdare</button>
+                <button class="symbol-item" data-symbol="negotiator" data-color="#fbbf24"><span class="sym-icon">💬</span> Förhandlare</button>
+                <button class="symbol-item" data-symbol="scout" data-color="#94a3b8"><span class="sym-icon">👁</span> Spanare</button>
+                <button class="symbol-item" data-symbol="sniper" data-color="#64748b"><span class="sym-icon">🎯</span> Skytt</button>
+              </div>
+            </details>
+            <details>
+              <summary>MÅL</summary>
+              <div class="symbol-list" data-category="targets">
+                <button class="symbol-item" data-symbol="suspect" data-color="#ef4444"><span class="sym-icon">⚠</span> Misstänkt</button>
+                <button class="symbol-item" data-symbol="armed" data-color="#dc2626"><span class="sym-icon">🔫</span> Beväpnad</button>
+                <button class="symbol-item" data-symbol="hostage" data-color="#f97316"><span class="sym-icon">👤</span> Gisslan</button>
+                <button class="symbol-item" data-symbol="civilian" data-color="#e2e8f0"><span class="sym-icon">○</span> Civilperson</button>
+                <button class="symbol-item" data-symbol="vip" data-color="#facc15"><span class="sym-icon">★</span> VIP</button>
+                <button class="symbol-item" data-symbol="evidence" data-color="#a3e635"><span class="sym-icon">📦</span> Bevis</button>
+                <button class="symbol-item" data-symbol="main-target" data-color="#b91c1c"><span class="sym-icon">◉</span> Huvudmål</button>
+                <button class="symbol-item" data-symbol="search" data-color="#f59e0b"><span class="sym-icon">🔍</span> Sökområde</button>
+              </div>
+            </details>
+            <details>
+              <summary>POSITIONER</summary>
+              <div class="symbol-list" data-category="positions">
+                <button class="symbol-item" data-symbol="entry" data-color="#22c55e"><span class="sym-icon">→</span> Ingång</button>
+                <button class="symbol-item" data-symbol="exit" data-color="#16a34a"><span class="sym-icon">←</span> Utgång</button>
+                <button class="symbol-item" data-symbol="rally" data-color="#eab308"><span class="sym-icon">⚑</span> Samlingsplats</button>
+                <button class="symbol-item" data-symbol="command" data-color="#a855f7"><span class="sym-icon">⌂</span> Ledningsplats</button>
+                <button class="symbol-item" data-symbol="vehicle" data-color="#0ea5e9"><span class="sym-icon">🚗</span> Fordonsplats</button>
+                <button class="symbol-item" data-symbol="med-point" data-color="#10b981"><span class="sym-icon">✚</span> Sjukvårdsplats</button>
+                <button class="symbol-item" data-symbol="barrier" data-color="#f97316"><span class="sym-icon">▬</span> Avspärrning</button>
+                <button class="symbol-item" data-symbol="checkpoint" data-color="#6366f1"><span class="sym-icon">⊘</span> Kontrollpunkt</button>
+                <button class="symbol-item" data-symbol="evac" data-color="#14b8a6"><span class="sym-icon">↗</span> Evakuering</button>
+                <button class="symbol-item" data-symbol="collection" data-color="#84cc16"><span class="sym-icon">◎</span> Uppsamling</button>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 class="panel-title">Rita-inställningar</h3>
+          <div class="form-group">
+            <label>Färg</label>
+            <input type="color" id="draw-color" value="#2563eb">
+          </div>
+          <div class="form-group">
+            <label>Tjocklek: <span id="stroke-width-val">3</span>px</label>
+            <input type="range" id="stroke-width" min="1" max="12" value="3">
+          </div>
+          <div class="form-group">
+            <label>Genomskinlighet: <span id="opacity-val">100</span>%</label>
+            <input type="range" id="draw-opacity" min="10" max="100" value="100">
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="draw-dashed"> Streckad</label>
+          </div>
+        </div>
+      </aside>
+
+      <main class="map-area">
+        <div id="map-toolbar" class="map-toolbar">
+          <button id="btn-upload-map" class="btn btn-primary btn-sm">LADDA UPP KARTA</button>
+          <button id="btn-change-map" class="btn btn-secondary btn-sm hidden">BYT KARTA</button>
+          <button id="btn-lock-map" class="btn btn-secondary btn-sm" title="Lås kartan">🔒 Lås karta</button>
+          <input type="file" id="map-upload" accept="image/png,image/jpeg,image/jpg,image/webp" class="hidden">
+          <span id="map-status" class="map-status">Ingen karta uppladdad</span>
+        </div>
+        <div id="stage-container">
+          <div id="konva-container"></div>
+        </div>
+        <div id="coords-display" class="coords-display">x: 0, y: 0 | Zoom: 100%</div>
+      </main>
+
+      <aside class="sidebar sidebar-right">
+        <div class="panel tabs">
+          <div class="tab-headers">
+            <button class="tab-btn active" data-tab="objects">Objekt</button>
+            <button class="tab-btn" data-tab="groups">Grupper</button>
+            <button class="tab-btn" data-tab="layers">Lager</button>
+            <button class="tab-btn" data-tab="notes">Anteckn.</button>
+            <button class="tab-btn" data-tab="timeline">Tidslinje</button>
+          </div>
+
+          <div id="tab-objects" class="tab-content active">
+            <div id="objects-list" class="objects-list"></div>
+          </div>
+
+          <div id="tab-groups" class="tab-content">
+            <button id="btn-add-group" class="btn btn-secondary btn-sm full-width">+ Ny grupp</button>
+            <div id="groups-list" class="groups-list"></div>
+            <div class="group-filters">
+              <h4>Filtrera grupper</h4>
+              <div id="group-filters"></div>
+            </div>
+          </div>
+
+          <div id="tab-layers" class="tab-content">
+            <div id="layers-list" class="layers-list"></div>
+          </div>
+
+          <div id="tab-notes" class="tab-content">
+            <textarea id="op-notes-panel" placeholder="Insatsanvisningar, information, övrigt..." rows="12"></textarea>
+            <button id="btn-save-notes" class="btn btn-secondary btn-sm full-width">Spara anteckningar</button>
+          </div>
+
+          <div id="tab-timeline" class="tab-content">
+            <button id="btn-add-timeline" class="btn btn-secondary btn-sm full-width">+ Lägg till händelse</button>
+            <div id="timeline-list" class="timeline-list"></div>
+          </div>
+        </div>
+
+        <div class="panel" id="properties-panel">
+          <h3 class="panel-title">Egenskaper</h3>
+          <div id="props-content">
+            <p class="muted">Markera ett objekt för att redigera.</p>
+          </div>
+        </div>
+
+        <div class="panel legend-panel">
+          <div class="legend-header">
+            <h3 class="panel-title">Taktisk legend</h3>
+            <button id="btn-toggle-legend" class="btn btn-icon btn-sm">👁</button>
+          </div>
+          <div id="legend-content" class="legend-content">
+            <div class="legend-item"><span class="leg-color" style="background:#2563eb"></span> Polis</div>
+            <div class="legend-item"><span class="leg-color" style="background:#ef4444"></span> Hot / misstänkt</div>
+            <div class="legend-item"><span class="leg-color" style="background:#22c55e"></span> Ingång / utgång</div>
+            <div class="legend-item"><span class="leg-color" style="background:#eab308"></span> Samlingsplats</div>
+            <div class="legend-item"><span class="leg-color" style="background:#a855f7"></span> Ledning</div>
+            <div class="legend-item"><span class="leg-color" style="background:#e2e8f0"></span> Civilperson</div>
+            <div class="legend-item"><span class="leg-color" style="background:#10b981"></span> Sjukvård</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- OBJEKT REDIGERA MODAL -->
+  <div id="edit-object-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Redigera objekt</h2>
+        <button class="modal-close" data-close="edit-object-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Namn</label>
+          <input type="text" id="edit-obj-name">
+        </div>
+        <div class="form-group">
+          <label>Beskrivning</label>
+          <textarea id="edit-obj-desc" rows="2"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Grupp</label>
+          <select id="edit-obj-group"></select>
+        </div>
+        <div class="form-group">
+          <label>Färg</label>
+          <input type="color" id="edit-obj-color">
+        </div>
+        <div class="form-group hidden" id="edit-text-options">
+          <label>Textstorlek</label>
+          <input type="number" id="edit-text-size" min="8" max="72" value="16">
+          <label><input type="checkbox" id="edit-text-bold"> Fetstil</label>
+          <label><input type="checkbox" id="edit-text-italic"> Kursiv</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="btn-delete-obj">Radera</button>
+        <button class="btn btn-secondary" data-close="edit-object-modal">Avbryt</button>
+        <button class="btn btn-primary" id="btn-save-obj">Spara</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GRUPP MODAL -->
+  <div id="group-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="group-modal-title">Ny grupp</h2>
+        <button class="modal-close" data-close="group-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Namn</label>
+          <input type="text" id="group-name" placeholder="t.ex. ALFA">
+        </div>
+        <div class="form-group">
+          <label>Färg</label>
+          <input type="color" id="group-color" value="#2563eb">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="group-modal">Avbryt</button>
+        <button class="btn btn-primary" id="btn-save-group">Spara</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TIDSLINJE MODAL -->
+  <div id="timeline-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Tidslinjehändelse</h2>
+        <button class="modal-close" data-close="timeline-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Tid</label>
+          <input type="text" id="tl-time" placeholder="20:00">
+        </div>
+        <div class="form-group">
+          <label>Händelse</label>
+          <input type="text" id="tl-event" placeholder="t.ex. Genomgång">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="timeline-modal">Avbryt</button>
+        <button class="btn btn-primary" id="btn-save-timeline">Spara</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIRM MODAL -->
+  <div id="confirm-modal" class="modal">
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h2 id="confirm-title">Bekräfta</h2>
+        <button class="modal-close" data-close="confirm-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="confirm-modal">Avbryt</button>
+        <button class="btn btn-danger" id="btn-confirm-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
