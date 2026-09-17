@@ -1,1 +1,1 @@
-https://maki48.github.io/NI-FRI-taktisk-planerare/
+https://maki48.github.io/MSSRP_Portal/
