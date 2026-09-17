@@ -2,22 +2,32 @@
 'use strict';
 
 /* ============================================================
-   ER:LC TAKTISK PLANERARE
+   MSSRP
    PRO UI APPLICATION
    ============================================================ */
 
-const SUPABASE_URL = 'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_cBVpntso_6Bdo1oy_7JOLg_X_ALJWpn';
+const SUPABASE_URL =
+  'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
 
-const supabase = window.supabase.createClient(
-  SUPABASE_URL,
-  SUPABASE_ANON_KEY
-);
+const SUPABASE_ANON_KEY =
+  'sb_publishable_oclE6KnOIjMUxIuCyKaFRiQ_Y8WZYgpo';
+
+const MSSRP_API_BASE = window.MSSRP_API_BASE || '/api';
+
+const supabase =
+  window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+
+
 /* ============================================================
    GLOBAL STATE
    ============================================================ */
 
 let currentUser = null;
+let accessRoles = [];
+let accessPermissions = new Set();
 let isLoginMode = true;
 let db = null;
 
@@ -1090,7 +1100,7 @@ function initDB() {
 
     const request =
       indexedDB.open(
-        'ERLC-Taktisk-Planerare',
+        'MSSRP-Portal',
         1
       );
 
@@ -1517,6 +1527,227 @@ function escapeHtml(value) {
 
 
 /* ============================================================
+   PASSWORD RESET
+   ============================================================ */
+
+function ensurePasswordResetUI() {
+  if (!document.getElementById('mssrp-reset-styles')) {
+    const style = document.createElement('style');
+    style.id = 'mssrp-reset-styles';
+    style.textContent = `
+      .mssrp-forgot-password { margin-top: 12px; text-align: center; }
+      .mssrp-link-btn { background: none; border: 0; color: #2f8cff; cursor: pointer; font: inherit; text-decoration: underline; }
+      .mssrp-link-btn:hover { opacity: .85; }
+      .mssrp-reset-modal { position: fixed; inset: 0; z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.72); }
+      .mssrp-reset-modal.hidden { display: none; }
+      .mssrp-reset-card { position: relative; width: min(420px, 100%); padding: 28px; border-radius: 14px; background: #111820; color: #fff; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+      .mssrp-reset-card h2 { margin: 0 0 8px; }
+      .mssrp-reset-card p { color: #aeb8c5; }
+      .mssrp-reset-card label { display: block; margin: 14px 0 6px; }
+      .mssrp-reset-card input { width: 100%; box-sizing: border-box; padding: 11px 12px; border-radius: 8px; border: 1px solid #344252; background: #0b1118; color: #fff; }
+      .mssrp-reset-card .mssrp-primary { margin-top: 16px; width: 100%; }
+      .mssrp-reset-close { position: absolute; top: 10px; right: 12px; border: 0; background: transparent; color: #fff; font-size: 25px; cursor: pointer; }
+      .mssrp-reset-message { min-height: 20px; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  const gate = document.getElementById('login-gate');
+  if (!gate) return;
+
+  if (!document.getElementById('forgotPasswordBtn')) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mssrp-forgot-password';
+    wrap.innerHTML = `
+      <button type="button" id="forgotPasswordBtn" class="mssrp-link-btn">
+        Glömt lösenordet?
+      </button>
+    `;
+    gate.querySelector('.mssrp-login-gate-card')?.appendChild(wrap);
+  }
+
+  if (!document.getElementById('forgotPasswordModal')) {
+    const modal = document.createElement('div');
+    modal.id = 'forgotPasswordModal';
+    modal.className = 'mssrp-reset-modal hidden';
+    modal.innerHTML = `
+      <div class="mssrp-reset-card">
+        <button type="button" id="closeForgotPassword" class="mssrp-reset-close" aria-label="Stäng">×</button>
+        <h2>Återställ lösenord</h2>
+        <p>Ange e-postadressen till ditt MSSRP-konto.</p>
+        <form id="forgotPasswordForm">
+          <label for="resetEmail">E-post</label>
+          <input id="resetEmail" type="email" autocomplete="email" required placeholder="namn@email.com">
+          <button type="submit" class="mssrp-primary">Skicka återställningslänk</button>
+        </form>
+        <p id="forgotPasswordMessage" class="mssrp-reset-message"></p>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  if (!document.getElementById('newPasswordModal')) {
+    const modal = document.createElement('div');
+    modal.id = 'newPasswordModal';
+    modal.className = 'mssrp-reset-modal hidden';
+    modal.innerHTML = `
+      <div class="mssrp-reset-card">
+        <h2>Välj nytt lösenord</h2>
+        <p>Välj ett nytt lösenord för ditt MSSRP-konto.</p>
+        <form id="newPasswordForm">
+          <label for="newPassword">Nytt lösenord</label>
+          <input id="newPassword" type="password" minlength="8" autocomplete="new-password" required>
+          <label for="newPasswordConfirm">Bekräfta lösenord</label>
+          <input id="newPasswordConfirm" type="password" minlength="8" autocomplete="new-password" required>
+          <button type="submit" class="mssrp-primary">Uppdatera lösenord</button>
+        </form>
+        <p id="newPasswordMessage" class="mssrp-reset-message"></p>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  const forgotBtn = document.getElementById('forgotPasswordBtn');
+  const forgotModal = document.getElementById('forgotPasswordModal');
+  const closeBtn = document.getElementById('closeForgotPassword');
+  const forgotForm = document.getElementById('forgotPasswordForm');
+  const forgotMessage = document.getElementById('forgotPasswordMessage');
+  const newModal = document.getElementById('newPasswordModal');
+  const newForm = document.getElementById('newPasswordForm');
+  const newMessage = document.getElementById('newPasswordMessage');
+
+  if (forgotBtn && forgotBtn.dataset.bound !== '1') {
+    forgotBtn.dataset.bound = '1';
+    forgotBtn.addEventListener('click', () => {
+      forgotModal?.classList.remove('hidden');
+      const input = document.getElementById('resetEmail');
+      input?.focus();
+    });
+  }
+
+  if (closeBtn && closeBtn.dataset.bound !== '1') {
+    closeBtn.dataset.bound = '1';
+    closeBtn.addEventListener('click', () => forgotModal?.classList.add('hidden'));
+  }
+
+  if (forgotModal && forgotModal.dataset.bound !== '1') {
+    forgotModal.dataset.bound = '1';
+    forgotModal.addEventListener('click', event => {
+      if (event.target === forgotModal) forgotModal.classList.add('hidden');
+    });
+  }
+
+  if (forgotForm && forgotForm.dataset.bound !== '1') {
+    forgotForm.dataset.bound = '1';
+    forgotForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const email = document.getElementById('resetEmail')?.value.trim();
+      if (!email) return;
+
+      const button = forgotForm.querySelector('button[type="submit"]');
+      if (button) button.disabled = true;
+      if (forgotMessage) forgotMessage.textContent = 'Skickar återställningslänk...';
+
+      try {
+        const redirectTo = `${window.location.origin}${window.location.pathname}?reset=password`;
+        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+        if (error) throw error;
+        if (forgotMessage) {
+          forgotMessage.textContent = 'Om kontot finns har en återställningslänk skickats till e-postadressen.';
+        }
+      } catch (error) {
+        console.error('Password reset:', error);
+        if (forgotMessage) forgotMessage.textContent = 'Kunde inte skicka återställningslänken. Försök igen.';
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
+  }
+
+  if (newForm && newForm.dataset.bound !== '1') {
+    newForm.dataset.bound = '1';
+    newForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const password = document.getElementById('newPassword')?.value || '';
+      const confirm = document.getElementById('newPasswordConfirm')?.value || '';
+      if (password.length < 8) {
+        if (newMessage) newMessage.textContent = 'Lösenordet måste vara minst 8 tecken.';
+        return;
+      }
+      if (password !== confirm) {
+        if (newMessage) newMessage.textContent = 'Lösenorden matchar inte.';
+        return;
+      }
+
+      const button = newForm.querySelector('button[type="submit"]');
+      if (button) button.disabled = true;
+      if (newMessage) newMessage.textContent = 'Uppdaterar lösenord...';
+
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!data?.session) throw new Error('Ingen återställningssession hittades.');
+        const { error } = await supabase.auth.updateUser({ password });
+        if (error) throw error;
+
+        if (newMessage) newMessage.textContent = 'Lösenordet har uppdaterats.';
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setTimeout(() => newModal?.classList.add('hidden'), 1200);
+      } catch (error) {
+        console.error('Password update:', error);
+        if (newMessage) newMessage.textContent = 'Kunde inte uppdatera lösenordet. Länken kan ha gått ut.';
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
+  }
+
+  if (newModal && newModal.dataset.bound !== '1') {
+    newModal.dataset.bound = '1';
+    newModal.addEventListener('click', event => {
+      if (event.target === newModal) newModal.classList.add('hidden');
+    });
+  }
+}
+
+async function checkPasswordRecovery() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const reset = params.get('reset') === 'password';
+    if (!reset) return;
+
+    ensurePasswordResetUI();
+
+    const { data } = await supabase.auth.getSession();
+    const modal = document.getElementById('newPasswordModal');
+    const message = document.getElementById('newPasswordMessage');
+
+    if (!data?.session) {
+      if (message) message.textContent = 'Återställningslänken är ogiltig eller har gått ut.';
+      modal?.classList.remove('hidden');
+      return;
+    }
+
+    modal?.classList.remove('hidden');
+  } catch (error) {
+    console.error('Recovery check:', error);
+  }
+}
+
+function bindPasswordRecoveryListener() {
+  try {
+    supabase.auth.onAuthStateChange(event => {
+      if (event === 'PASSWORD_RECOVERY') {
+        ensurePasswordResetUI();
+        document.getElementById('newPasswordModal')?.classList.remove('hidden');
+      }
+    });
+  } catch (error) {
+    console.error('Recovery listener:', error);
+  }
+}
+
+
+/* ============================================================
    AUTH
    ============================================================ */
 
@@ -1559,38 +1790,65 @@ async function checkAuth() {
 }
 
 
-function updateAuthUI() {
-
-  const loginButton =
-    $('#btn-login');
-
-  const userInfo =
-    $('#user-info');
-
-  const email =
-    $('#user-email');
-
+function updateLoginGate() {
+  const gate = $('#login-gate');
+  if (!gate) return;
   if (currentUser) {
-
-    hide(loginButton);
-    show(userInfo);
-
-    if (email) {
-
-      email.textContent =
-        currentUser.email || '';
-
-    }
-
+    gate.classList.add('hidden');
+    document.body.classList.remove('mssrp-locked');
   } else {
-
-    show(loginButton);
-    hide(userInfo);
-
+    gate.classList.remove('hidden');
+    document.body.classList.add('mssrp-locked');
   }
-
 }
 
+function updateAuthUI() {
+  updateLoginGate();
+  const loginButton = $('#btn-login');
+  const userInfo = $('#user-info');
+  const email = $('#user-email');
+  const badge = $('#user-role-badge');
+
+  if (currentUser) {
+    hide(loginButton);
+    show(userInfo);
+    if (email) email.textContent = currentUser.email || '';
+    if (badge) badge.textContent = accessRoles.length ? accessRoles.map(formatRoleName).join(' + ') : 'Civil';
+  } else {
+    show(loginButton);
+    hide(userInfo);
+    if (badge) badge.textContent = 'Ej inloggad';
+  }
+  updatePortalAccess();
+}
+
+
+async function submitGateAuth(mode = 'login') {
+  const email = $('#gate-email')?.value.trim();
+  const password = $('#gate-password')?.value;
+  const errorEl = $('#gate-error');
+  if (errorEl) { errorEl.textContent = ''; errorEl.classList.add('hidden'); }
+  if (!email || !password) {
+    if (errorEl) { errorEl.textContent = 'Fyll i e-post och lösenord.'; errorEl.classList.remove('hidden'); }
+    return;
+  }
+  try {
+    const result = mode === 'login'
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({ email, password });
+    if (result.error) throw result.error;
+    currentUser = result.data?.user || null;
+    updateAuthUI();
+    await loadAccessProfile();
+    if (mode === 'signup' && !currentUser) {
+      if (errorEl) { errorEl.textContent = 'Kontot skapades. Bekräfta din e-post om Supabase kräver det och logga sedan in.'; errorEl.classList.remove('hidden'); }
+      return;
+    }
+    toast(mode === 'login' ? 'Du är nu inloggad.' : 'Kontot har skapats.');
+  } catch (error) {
+    if (errorEl) { errorEl.textContent = error.message || 'Inloggningen misslyckades.'; errorEl.classList.remove('hidden'); }
+  }
+}
 
 async function submitAuth() {
 
@@ -1661,6 +1919,7 @@ async function submitAuth() {
     closeModal('auth-modal');
 
     updateAuthUI();
+    await loadAccessProfile();
 
     if (!isLoginMode) {
 
@@ -1710,6 +1969,7 @@ async function logout() {
   currentUser = null;
 
   updateAuthUI();
+  await loadAccessProfile();
 
   toast(
     'Du har loggats ut.'
@@ -1719,10 +1979,521 @@ async function logout() {
 
 
 /* ============================================================
+   MSSRP ROLE / PERMISSION ACCESS
+   ============================================================ */
+
+function formatRoleName(role) {
+  const names = { civil:'Civil', polis:'Polis', fri:'FRI', ni:'NI', dispatcher:'Dispatcher', admin:'Admin' };
+  return names[role] || role;
+}
+
+function hasPermission(permission) {
+  return !!currentUser && (accessPermissions.has(permission) || accessRoles.includes('admin'));
+}
+
+async function loadAccessProfile() {
+  accessRoles = [];
+  accessPermissions = new Set();
+
+  if (!currentUser) {
+    updateAuthUI();
+    return;
+  }
+
+  try {
+    const { data: roleRows, error: roleError } = await supabase
+      .from('user_roles')
+      .select('role_id, roles(name)')
+      .eq('user_id', currentUser.id);
+    if (roleError) throw roleError;
+
+    accessRoles = (roleRows || []).map(r => r.roles?.name).filter(Boolean);
+    if (!accessRoles.length) accessRoles = ['civil'];
+
+    const roleIds = (roleRows || []).map(r => r.role_id).filter(Boolean);
+    if (roleIds.length) {
+      const { data: permissionRows, error: permissionError } = await supabase
+        .from('role_permissions')
+        .select('permission_id, permissions(name)')
+        .in('role_id', roleIds);
+      if (permissionError) throw permissionError;
+      (permissionRows || []).forEach(r => {
+        if (r.permissions?.name) accessPermissions.add(r.permissions.name);
+      });
+    }
+  } catch (error) {
+    console.error('Access profile failed:', error);
+    // Keep the UI locked if the permissions could not be verified.
+    accessRoles = [];
+    accessPermissions = new Set();
+    toast('Kunde inte verifiera behörigheter. Skyddade flikar är låsta.');
+  }
+
+  updateAuthUI();
+  if (hasPermission('admin')) {
+    await loadAdminUsers();
+    await loadAdminPermissions();
+    await loadAdminStats();
+  }
+  startDispatchPolling();
+}
+
+function updatePortalAccess() {
+  $$('[data-feature]').forEach(el => {
+    const feature = el.dataset.feature;
+    const allowed = hasPermission(feature);
+    if (allowed) {
+      el.classList.remove('hidden');
+      el.removeAttribute('aria-hidden');
+    } else {
+      el.classList.add('hidden');
+      el.setAttribute('aria-hidden', 'true');
+    }
+  });
+
+  $$('[data-feature-section]').forEach(section => {
+    const allowed = hasPermission(section.dataset.featureSection);
+    section.classList.toggle('hidden', !allowed);
+  });
+
+  const tacticalNav = $('[data-feature="tactical_plan"]');
+  if (tacticalNav && hasPermission('tactical_plan')) tacticalNav.classList.remove('hidden');
+
+  const adminPanel = $('#admin-panel');
+  if (adminPanel) adminPanel.classList.toggle('hidden', !hasPermission('admin'));
+}
+
+function requireFeature(permission, action) {
+  if (!currentUser) {
+    isLoginMode = true;
+    updateAuthModal();
+    showModal('auth-modal');
+    toast('Logga in för att använda denna funktion.');
+    return false;
+  }
+  if (!hasPermission(permission)) {
+    toast('Du saknar behörighet till denna funktion.');
+    return false;
+  }
+  if (typeof action === 'function') action();
+  return true;
+}
+
+async function loadAdminUsers() {
+  if (!hasPermission('admin')) return;
+  const bodies = ['#admin-users', '#admin-users-top'].map(sel => $(sel)).filter(Boolean);
+  if (!bodies.length) return;
+  const search = ($('#admin-user-search')?.value || '').trim().toLowerCase();
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, display_name, user_roles(role_id, roles(id,name))')
+      .order('display_name');
+    if (error) throw error;
+    const roles = ['civil','polis','fri','ni','dispatcher','admin'];
+    const filtered = (data || []).filter(user => {
+      const haystack = `${user.display_name || ''} ${user.id}`.toLowerCase();
+      return !search || haystack.includes(search);
+    });
+    const html = filtered.map(user => {
+      const assigned = (user.user_roles || []).map(x => x.roles?.name).filter(Boolean);
+      const options = roles.map(role => `<option value="${role}">${formatRoleName(role)}</option>`).join('');
+      const removable = assigned.filter(Boolean).map(role => `<button type="button" class="mssrp-admin-remove-role" data-admin-remove-role="${user.id}" data-role-name="${escapeHtml(role)}">${escapeHtml(formatRoleName(role))} ×</button>`).join('');
+      return `<tr><td><strong>${escapeHtml(user.display_name || 'Okänd')}</strong><small>${escapeHtml(user.id)}</small></td><td>${assigned.map(formatRoleName).join(', ') || '—'}</td><td><div class="mssrp-admin-assign"><select data-admin-user="${user.id}">${options}</select><button type="button" class="mssrp-secondary" data-admin-add-role="${user.id}">Ge roll</button></div></td><td><div class="mssrp-admin-remove-list">${removable || '<span>—</span>'}</div></td></tr>`;
+    }).join('');
+    bodies.forEach(body => body.innerHTML = html || '<tr><td colspan="4">Inga användare hittades.</td></tr>');
+    const count = $('#admin-user-count');
+    if (count) count.textContent = `${filtered.length} visade av ${(data || []).length}`;
+    const adminCount = $('#admin-stat-admins');
+    if (adminCount) adminCount.textContent = (data || []).filter(u => (u.user_roles || []).some(x => x.roles?.name === 'admin')).length;
+
+    $$('.mssrp-admin-table [data-admin-add-role]').forEach(btn => btn.addEventListener('click', async () => {
+      const userId = btn.dataset.adminAddRole;
+      const select = $(`[data-admin-user="${CSS.escape(userId)}"]`);
+      const roleName = select?.value;
+      if (!roleName) return;
+      if (roleName === 'admin' && userId === currentUser?.id) {
+        toast('Du har redan administratörsbehörighet.');
+        return;
+      }
+      const { data: role, error: roleError } = await supabase.from('roles').select('id').eq('name', roleName).single();
+      if (roleError) { toast(roleError.message); return; }
+      const { error } = await supabase.from('user_roles').upsert({ user_id:userId, role_id:role.id }, { onConflict:'user_id,role_id' });
+      if (error) { toast(error.message); return; }
+      toast(`${formatRoleName(roleName)} tilldelad.`);
+      await loadAdminUsers();
+    }));
+
+    $$('.mssrp-admin-table [data-admin-remove-role]').forEach(btn => btn.addEventListener('click', async () => {
+      const userId = btn.dataset.adminRemoveRole;
+      const roleName = btn.dataset.roleName;
+      if (!userId || !roleName) return;
+      if (userId === currentUser?.id && roleName === 'admin') {
+        toast('Du kan inte ta bort din egen Admin-roll här.');
+        return;
+      }
+      const { data: role, error: roleError } = await supabase.from('roles').select('id').eq('name', roleName).single();
+      if (roleError) { toast(roleError.message); return; }
+      const { error } = await supabase.from('user_roles').delete().eq('user_id', userId).eq('role_id', role.id);
+      if (error) { toast(error.message); return; }
+      toast(`${formatRoleName(roleName)} borttagen.`);
+      await loadAdminUsers();
+    }));
+  } catch (error) {
+    console.error('Admin users failed:', error);
+    bodies.forEach(body => body.innerHTML = `<tr><td colspan="4">Kunde inte läsa användare.</td></tr>`);
+  }
+}
+
+async function loadAdminPermissions() {
+  if (!hasPermission('admin')) return;
+  const roleSelect = $('#admin-role-select');
+  const list = $('#admin-permission-list');
+  if (!roleSelect || !list) return;
+  try {
+    const [{ data: roles, error: rolesError }, { data: permissions, error: permissionsError }] = await Promise.all([
+      supabase.from('roles').select('id,name,description').order('name'),
+      supabase.from('permissions').select('id,name,description').order('name')
+    ]);
+    if (rolesError) throw rolesError;
+    if (permissionsError) throw permissionsError;
+    roleSelect.innerHTML = (roles || []).map(r => `<option value="${r.id}">${escapeHtml(formatRoleName(r.name))}</option>`).join('');
+    window.__mssrpAdminRoles = roles || [];
+    window.__mssrpAdminPermissions = permissions || [];
+    await renderAdminPermissionEditor();
+  } catch (error) {
+    console.error('Admin permissions failed:', error);
+    list.innerHTML = '<div class="mssrp-status-row">Kunde inte läsa behörigheter.</div>';
+  }
+}
+
+async function renderAdminPermissionEditor() {
+  const roleSelect = $('#admin-role-select');
+  const list = $('#admin-permission-list');
+  if (!roleSelect || !list || !roleSelect.value) return;
+  const role = (window.__mssrpAdminRoles || []).find(r => r.id === roleSelect.value);
+  if (!role) return;
+  const { data, error } = await supabase.from('role_permissions').select('permission_id').eq('role_id', role.id);
+  if (error) { toast(error.message); return; }
+  const assigned = new Set((data || []).map(r => r.permission_id));
+  list.innerHTML = (window.__mssrpAdminPermissions || []).map(permission => `
+    <label class="mssrp-permission-item">
+      <input type="checkbox" data-admin-permission="${permission.id}" ${assigned.has(permission.id) ? 'checked' : ''}>
+      <span><strong>${escapeHtml(permission.name)}</strong><small>${escapeHtml(permission.description || '')}</small></span>
+    </label>`).join('');
+  const status = $('#admin-permission-status');
+  if (status) status.textContent = `${formatRoleName(role.name)} · ${(window.__mssrpAdminPermissions || []).length} behörigheter tillgängliga`;
+}
+
+async function saveAdminPermissions() {
+  if (!hasPermission('admin')) return;
+  const roleId = $('#admin-role-select')?.value;
+  if (!roleId) return;
+  const checked = $$('#admin-permission-list [data-admin-permission]:checked').map(el => el.dataset.adminPermission);
+  try {
+    const { error: deleteError } = await supabase.from('role_permissions').delete().eq('role_id', roleId);
+    if (deleteError) throw deleteError;
+    if (checked.length) {
+      const rows = checked.map(permission_id => ({ role_id: roleId, permission_id }));
+      const { error: insertError } = await supabase.from('role_permissions').insert(rows);
+      if (insertError) throw insertError;
+    }
+    toast('Rollbehörigheterna sparades.');
+    await loadAccessProfile();
+    await renderAdminPermissionEditor();
+  } catch (error) {
+    console.error('Save permissions failed:', error);
+    toast(error.message || 'Kunde inte spara rollbehörigheter.');
+  }
+}
+
+async function loadAdminStats() {
+  if (!hasPermission('admin')) return;
+  try {
+    const [{ count: users }, { count: activeCalls }, { count: units }] = await Promise.all([
+      supabase.from('profiles').select('id', { count:'exact', head:true }),
+      supabase.from('dispatch_calls').select('id', { count:'exact', head:true }).in('status', ['new','assigned','active']),
+      supabase.from('dispatch_units').select('id', { count:'exact', head:true }).neq('status', 'off-duty')
+    ]);
+    if ($('#admin-stat-users')) $('#admin-stat-users').textContent = users ?? '0';
+    if ($('#admin-stat-active-calls')) $('#admin-stat-active-calls').textContent = activeCalls ?? '0';
+    if ($('#admin-stat-units')) $('#admin-stat-units').textContent = units ?? '0';
+    if ($('#admin-server-status')) $('#admin-server-status').textContent = 'MSSRP-databasen svarar.';
+  } catch (error) {
+    console.error('Admin stats failed:', error);
+    if ($('#admin-server-status')) $('#admin-server-status').textContent = 'Kunde inte läsa systemstatus.';
+  }
+}
+
+async function mssrpApi(path, options = {}) {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) throw new Error('Du måste vara inloggad.');
+  const response = await fetch(`${MSSRP_API_BASE}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}), Authorization: `Bearer ${token}` }
+  });
+  let body = {};
+  try { body = await response.json(); } catch {}
+  if (!response.ok) throw new Error(body.error || `API-fel (${response.status})`);
+  return body;
+}
+
+function renderDispatchCalls(rows) {
+  const el = $('#dispatch-calls-list');
+  if (!el) return;
+  if (!rows?.length) { el.innerHTML = '<span>Inga aktiva larm.</span>'; return; }
+  el.innerHTML = rows.map(call => `<div class="mssrp-list-item"><div><strong>${escapeHtml(call.source === 'erlc' ? 'ER:LC 112' : 'MSSRP 112')}</strong><span>${escapeHtml(call.location || 'Okänd plats')}</span></div><div><span>${escapeHtml(call.caller_name || 'Okänd')}</span>${call.legal_violations ? `<small><strong>Lagöverträdelser:</strong> ${escapeHtml(call.legal_violations)}</small>` : ''}<small>${escapeHtml(call.description || '')}</small></div><b>${escapeHtml(call.status || 'new')}</b></div>`).join('');
+}
+
+function renderDispatchUnits(rows) {
+  const el = $('#dispatch-units-list');
+  if (!el) return;
+  if (!rows?.length) { el.innerHTML = '<span>Inga enheter i tjänst.</span>'; return; }
+  el.innerHTML = rows.map(unit => `<div class="mssrp-list-item"><div><strong>${escapeHtml(unit.callsign)}</strong><span>${escapeHtml(unit.unit_type || 'Enhet')}</span></div><b>${escapeHtml(unit.status || 'available')}</b></div>`).join('');
+}
+
+function updateDutyUI(unit) {
+  const badge = $('#duty-status-badge'), current = $('#duty-current'), off = $('#duty-off-btn'), form = $('#duty-form');
+  if (!badge || !current || !off || !form) return;
+  const onDuty = !!unit;
+  badge.textContent = onDuty ? `I TJÄNST · ${unit.callsign}` : 'EJ I TJÄNST';
+  current.innerHTML = onDuty ? `<span class="status-dot"></span><span>Enhet <strong>${escapeHtml(unit.callsign)}</strong> · ${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</span>` : '<span>Skapa ett enhetsnummer för att gå i tjänst.</span>';
+  off.disabled = !onDuty;
+  form.querySelectorAll('input,select,button[type="submit"]').forEach(el => { el.disabled = onDuty; });
+}
+
+async function refreshDispatchBoard() {
+  if (!hasPermission('dispatch')) return;
+  const [{ data: calls, error: callsError }, { data: units, error: unitsError }] = await Promise.all([
+    supabase.from('dispatch_calls').select('id,source,caller_name,location,description,legal_violations,status,priority,created_at').in('status', ['new','assigned','active']).order('created_at', { ascending: false }).limit(50),
+    supabase.from('dispatch_units').select('id,callsign,unit_type,status,user_id,assigned_call_id').order('callsign')
+  ]);
+  if (callsError) console.error('Dispatch calls:', callsError);
+  if (unitsError) console.error('Dispatch units:', unitsError);
+  renderDispatchCalls(calls || []);
+  renderDispatchUnits(units || []);
+  updateDutyUI((units || []).find(x => x.user_id === currentUser?.id) || null);
+}
+
+function startDispatchPolling() {
+  clearInterval(window.__mssrpDispatchTimer);
+  if (!hasPermission('dispatch')) return;
+  refreshDispatchBoard();
+  window.__mssrpDispatchTimer = setInterval(refreshDispatchBoard, 5000);
+}
+
+async function sendErlcAdminCommand(path, payload) {
+  const result = await mssrpApi(path, { method: 'POST', body: JSON.stringify(payload) });
+  toast('ER:LC-kommandot skickades.');
+  return result;
+}
+
+function initPortalTabs() {
+  const pages = $$('[data-portal-page]');
+  const tabs = $$('.mssrp-nav a[href^="#"]');
+  if (!pages.length || !tabs.length) return;
+
+  document.body.classList.add('mssrp-tab-mode');
+
+  const showPage = (pageId, updateHash = true) => {
+    const target = document.querySelector(`[data-portal-page="${CSS.escape(pageId)}"]`);
+    if (!target) return false;
+
+    pages.forEach(page => page.classList.toggle('portal-page-hidden', page !== target));
+    tabs.forEach(tab => {
+      const active = tab.getAttribute('href') === `#${pageId}`;
+      tab.classList.toggle('portal-tab-active', active);
+      if (active) tab.setAttribute('aria-current', 'page');
+      else tab.removeAttribute('aria-current');
+    });
+
+    if (updateHash && window.location.hash !== `#${pageId}`) {
+      history.replaceState(null, '', `#${pageId}`);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return true;
+  };
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', event => {
+      const href = tab.getAttribute('href') || '';
+      const pageId = href.slice(1);
+      if (!pageId || pageId === 'shop') return;
+      if (showPage(pageId)) event.preventDefault();
+    });
+  });
+
+  window.addEventListener('hashchange', () => {
+    const pageId = window.location.hash.slice(1) || 'home';
+    showPage(pageId, false);
+  });
+
+  const initial = window.location.hash.slice(1) || 'home';
+  if (!showPage(initial, false)) showPage('home', false);
+}
+
+function navigateToPortalPage(pageId) {
+  const target = document.querySelector(`[data-portal-page="${CSS.escape(pageId)}"]`);
+  if (!target) return false;
+  const link = document.querySelector(`.mssrp-nav a[href="#${CSS.escape(pageId)}"]`);
+  if (link) link.click();
+  else window.location.hash = `#${pageId}`;
+  return true;
+}
+
+function bindPortalEvents() {
+  // One delegated handler covers both static and dynamically rendered buttons/cards.
+  document.addEventListener('click', event => {
+    const featureEl = event.target.closest('[data-feature]');
+    if (!featureEl) return;
+    const feature = featureEl.dataset.feature;
+    if (!hasPermission(feature)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!currentUser) {
+        isLoginMode = true; updateAuthModal(); showModal('auth-modal');
+      }
+      toast(currentUser ? 'Du saknar behörighet till denna funktion.' : 'Logga in för att se denna funktion.');
+      return;
+    }
+    if (featureEl.tagName !== 'A') event.preventDefault();
+    const pageMap = {
+      call_112:'112', police_database:'police', dispatch:'dispatch', roleplay_system:'roleplay',
+      tactical_plan:'tactical', roblox_integration:'roblox', admin:'admin'
+    };
+    const pageId = pageMap[feature];
+    if (pageId) navigateToPortalPage(pageId);
+  });
+
+  $('#btn-login-hero')?.addEventListener('click', () => {
+    isLoginMode = true;
+    updateAuthModal();
+    showModal('auth-modal');
+  });
+
+  $('#btn-new-op-portal')?.addEventListener('click', openNewOperationModal);
+  $('#btn-open-op-portal')?.addEventListener('click', () => {
+    navigateToPortalPage('operations');
+  });
+
+  $('#admin-refresh-top')?.addEventListener('click', async () => {
+    await Promise.all([loadAdminUsers(), loadAdminPermissions(), loadAdminStats()]);
+    toast('Adminpanelen uppdaterad.');
+  });
+  $('#admin-reload-permissions')?.addEventListener('click', loadAdminPermissions);
+  $('#admin-role-select')?.addEventListener('change', renderAdminPermissionEditor);
+  $('#admin-save-permissions')?.addEventListener('click', saveAdminPermissions);
+  $('#admin-user-search')?.addEventListener('input', () => loadAdminUsers());
+
+  $('#portal-112-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!requireFeature('call_112')) return;
+    const roblox = $('#portal-112-roblox')?.value.trim();
+    const discord = $('#portal-112-discord')?.value.trim();
+    const district = $('#portal-112-district')?.value.trim();
+    const location = $('#portal-112-location')?.value.trim();
+    const postcode = $('#portal-112-postcode')?.value.trim();
+    const legalViolations = $('#portal-112-violations')?.value.trim();
+    const description = $('#portal-112-description')?.value.trim();
+    const units = $$('#portal-112-units option:checked').map(option => option.value);
+    const priority = Number($('#portal-112-priority')?.value || 3);
+    if (!roblox || !location || !legalViolations || !description) {
+      toast('Fyll i Roblox-namn, plats, lagöverträdelser och beskrivning.');
+      return;
+    }
+    const button = event.target.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+    try {
+      const rawPayload = { roblox_username: roblox, discord_username: discord, district, postcode, requested_units: units };
+      const { error } = await supabase.from('dispatch_calls').insert({
+        caller_id: currentUser.id,
+        caller_name: roblox,
+        location,
+        description,
+        legal_violations: legalViolations,
+        priority,
+        raw_payload: rawPayload
+      });
+      if (error) throw error;
+      event.target.reset();
+      toast('112-larm skickat till Dispatch.');
+      navigateToPortalPage('dispatch');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'Kunde inte skicka larmet.');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+
+  $('#duty-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!requireFeature('dispatch')) return;
+    const callsign = $('#duty-callsign')?.value.trim();
+    const unitType = $('#duty-unit-type')?.value;
+    if (!callsign) { toast('Ange ett enhetsnummer.'); return; }
+    const button = event.target.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+    try {
+      await mssrpApi('/dispatch/on-duty', { method: 'POST', body: JSON.stringify({ callsign, unitType }) });
+      event.target.reset();
+      toast(`Enhet ${callsign} skapad. Du är nu i tjänst.`);
+      await refreshDispatchBoard();
+    } catch (error) { toast(error.message); }
+    finally { if (button) button.disabled = false; }
+  });
+
+  $('#duty-off-btn')?.addEventListener('click', async () => {
+    if (!requireFeature('dispatch')) return;
+    try {
+      await mssrpApi('/dispatch/off-duty', { method: 'POST', body: '{}' });
+      toast('Du har gått ur tjänst.');
+      await refreshDispatchBoard();
+    } catch (error) { toast(error.message); }
+  });
+
+  $('#erlc-hint-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!requireFeature('admin')) return;
+    try { await sendErlcAdminCommand('/erlc/hint', { text: $('#erlc-hint-text')?.value.trim() }); event.target.reset(); }
+    catch (error) { toast(error.message); }
+  });
+
+  $('#erlc-message-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!requireFeature('admin')) return;
+    try { await sendErlcAdminCommand('/erlc/message', { text: $('#erlc-message-text')?.value.trim() }); event.target.reset(); }
+    catch (error) { toast(error.message); }
+  });
+
+  $('#erlc-pm-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!requireFeature('admin')) return;
+    try { await sendErlcAdminCommand('/erlc/pm', { player: $('#erlc-pm-player')?.value.trim(), text: $('#erlc-pm-text')?.value.trim() }); event.target.reset(); }
+    catch (error) { toast(error.message); }
+  });
+
+  $$('[data-shop-item]').forEach(item => item.addEventListener('click', () => {
+    toast(`${item.querySelector('strong')?.textContent || 'Shop'} är en rollspelsfunktion och är redo för vidare innehåll.`);
+  }));
+
+  startDispatchPolling();
+}
+
+/* ============================================================
    CREATE OPERATION
    ============================================================ */
 
 function openNewOperationModal() {
+
+  if (!currentUser) {
+    isLoginMode = true; updateAuthModal(); showModal('auth-modal'); toast('Logga in för att skapa en operation.'); return;
+  }
+
+  if (!hasPermission('tactical_plan')) {
+    toast('Du saknar behörighet till Taktisk plan.'); return;
+  }
 
   const form =
     $('#new-op-form');
@@ -1828,6 +2599,9 @@ async function createOperationFromForm(
    ============================================================ */
 
 function openOperation(id) {
+
+  if (!currentUser) { toast('Logga in för att öppna en operation.'); return; }
+  if (!hasPermission('tactical_plan')) { toast('Du saknar behörighet till Taktisk plan.'); return; }
 
   const operation =
     state.opsList.find(
@@ -6044,13 +6818,13 @@ function exportPlan() {
   const payload = {
 
     format:
-      'erlcplan',
+      'mssrpplan',
 
     version:
       2,
 
     application:
-      'ER:LC Taktisk Planerare',
+      'MSSRP Taktisk Planerare',
 
     exportedAt:
       new Date().toISOString(),
@@ -6091,7 +6865,7 @@ function exportPlan() {
   a.download =
     `${sanitizeFilename(
       state.currentOp.name
-    )}.erlcplan`;
+    )}.mssrpplan`;
 
   a.click();
 
@@ -6477,6 +7251,12 @@ function bindEvents() {
      AUTH
   ------------------------------ */
 
+  $('#gate-login')?.addEventListener('click', () => submitGateAuth('login'));
+  $('#gate-signup')?.addEventListener('click', () => submitGateAuth('signup'));
+  $('#gate-password')?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') submitGateAuth('login');
+  });
+
   $('#btn-login')?.addEventListener(
     'click',
     () => {
@@ -6676,7 +7456,7 @@ function bindEvents() {
 
           if (
             type ===
-            'erlcplan'
+            'mssrpplan'
           ) {
 
             exportPlan();
@@ -6946,11 +7726,8 @@ function bindEvents() {
       button.addEventListener(
         'click',
         () => {
-
-          closeModal(
-            button.dataset.close
-          );
-
+          if (button.dataset.close === 'auth-modal' && !currentUser) return;
+          closeModal(button.dataset.close);
         }
       );
 
@@ -6972,11 +7749,8 @@ function bindEvents() {
         ?.addEventListener(
           'click',
           () => {
-
-            modal.classList.remove(
-              'active'
-            );
-
+            if (modal.id === 'auth-modal' && !currentUser) return;
+            modal.classList.remove('active');
           }
         );
 
@@ -7137,7 +7911,11 @@ function updateAuthModal() {
 
 async function init() {
 
+  ensurePasswordResetUI();
+  bindPasswordRecoveryListener();
   bindEvents();
+  bindPortalEvents();
+  initPortalTabs();
 
   updateAuthModal();
 
@@ -7161,6 +7939,8 @@ async function init() {
   await loadOperations();
 
   await checkAuth();
+  await loadAccessProfile();
+  await checkPasswordRecovery();
 
   setTool(
     'select'
