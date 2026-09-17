@@ -23,6 +23,24 @@
 
   <!-- Styles -->
 <link rel="stylesheet" href="style.css">
+<style id="mssrp-functional-tools">
+.mssrp-police-tools{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}
+.mssrp-police-tool{min-width:0;padding:14px;border:1px solid rgba(148,163,184,.22);border-radius:8px;background:rgba(15,23,42,.34)}
+.mssrp-search-form{display:flex;gap:8px;margin-top:12px}
+.mssrp-search-form input{min-width:0;flex:1}
+.mssrp-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.mssrp-list-item{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid rgba(148,163,184,.18);border-radius:7px}
+.mssrp-list-item>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.mssrp-list-item small,.mssrp-list-item span{overflow-wrap:anywhere}
+.mssrp-tool-modal-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.mssrp-tool-record{padding:12px;border:1px solid rgba(148,163,184,.2);border-radius:8px;background:rgba(15,23,42,.35)}
+.mssrp-tool-record strong{display:block;margin-bottom:4px}
+.mssrp-tool-record small{color:#aeb4bb;white-space:pre-wrap}
+.mssrp-tool-form{display:grid;gap:12px}
+.mssrp-tool-form textarea{min-height:100px;resize:vertical}
+@media(max-width:900px){.mssrp-police-tools{grid-template-columns:1fr}}
+</style>
+
 
   <!-- Konva -->
   <script
@@ -178,7 +196,29 @@
           <div><div class="mssrp-kicker">POLIS</div><h2>Polisdatabas</h2><p>Skyddad åtkomst — endast användare med rätt behörighet ser denna flik.</p></div>
           <span class="mssrp-access-badge">POLICE DATABASE</span>
         </div>
-        <div class="mssrp-info-card"><strong>Polisregister</strong><p>Sök och hantera polisregister. Den faktiska åtkomsten kontrolleras även av Supabase RLS.</p><div class="mssrp-portal-grid"><div class="mssrp-mini-card"><b>Personer</b><span>Sök i polisregister</span></div><div class="mssrp-mini-card"><b>Ärenden</b><span>Visa kopplade registerposter</span></div><div class="mssrp-mini-card"><b>Ny post</b><span>Skapa en registrering</span></div></div></div>
+        <div class="mssrp-info-card">
+          <strong>Polisregister</strong>
+          <p>Sök och hantera polisregister. Den faktiska åtkomsten kontrolleras även av Supabase RLS.</p>
+          <div class="mssrp-police-tools">
+            <div class="mssrp-police-tool">
+              <div class="mssrp-mini-card"><b>Personer</b><span>Sök i polisregister</span></div>
+              <form id="police-person-search-form" class="mssrp-search-form">
+                <input id="police-person-search" type="search" placeholder="Sök namn eller användar-ID…" autocomplete="off">
+                <button class="mssrp-primary" type="submit">Sök</button>
+              </form>
+              <div id="police-person-results" class="mssrp-list"><span>Skriv ett namn eller ID och tryck Sök.</span></div>
+            </div>
+            <div class="mssrp-police-tool">
+              <div class="mssrp-mini-card"><b>Ärenden</b><span>Visa kopplade registerposter</span></div>
+              <button id="police-load-cases" class="mssrp-secondary" type="button">Visa ärenden</button>
+              <div id="police-case-results" class="mssrp-list"><span>Tryck på knappen för att läsa ärenden.</span></div>
+            </div>
+            <div class="mssrp-police-tool">
+              <div class="mssrp-mini-card"><b>Ny post</b><span>Skapa en registrering</span></div>
+              <button id="police-new-post" class="mssrp-primary" type="button">Skapa ny post</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="mssrp-section dark mssrp-portal-section mssrp-portal-page" id="dispatch" data-portal-page="dispatch" data-feature-section="dispatch">
@@ -249,7 +289,13 @@
 
       <section class="mssrp-section dark mssrp-portal-section mssrp-portal-page" id="roleplay" data-portal-page="roleplay" data-feature-section="roleplay_system">
         <div class="mssrp-section-title"><div class="mssrp-kicker">ROLLSPEL</div><h2>Rollspelssystem</h2><p>Verktyg för MSSRP:s rollspel.</p></div>
-        <div class="mssrp-card-grid"><div class="mssrp-card"><span class="mssrp-card-icon">▣</span><span><strong>Krimvapen</strong><small>Rollspelsregister för krimvapen.</small></span></div><div class="mssrp-card"><span class="mssrp-card-icon">▤</span><span><strong>Bank</strong><small>Rollspelsrelaterad bankinformation.</small></span></div><div class="mssrp-card"><span class="mssrp-card-icon">⌂</span><span><strong>Fastigheter</strong><small>Fastighetsregister.</small></span></div><div class="mssrp-card"><span class="mssrp-card-icon">▥</span><span><strong>Folkbokföringen</strong><small>Rollspelsregister för folkbokföring.</small></span></div></div>
+        <div class="mssrp-card-grid">
+          <button class="mssrp-card" type="button" data-roleplay-tool="krimvapen"><span class="mssrp-card-icon">▣</span><span><strong>Krimvapen</strong><small>Rollspelsregister för krimvapen.</small></span></button>
+          <button class="mssrp-card" type="button" data-roleplay-tool="bank"><span class="mssrp-card-icon">▤</span><span><strong>Bank</strong><small>Rollspelsrelaterad bankinformation.</small></span></button>
+          <button class="mssrp-card" type="button" data-roleplay-tool="fastigheter"><span class="mssrp-card-icon">⌂</span><span><strong>Fastigheter</strong><small>Fastighetsregister.</small></span></button>
+          <button class="mssrp-card" type="button" data-roleplay-tool="folkbokforing"><span class="mssrp-card-icon">▥</span><span><strong>Folkbokföringen</strong><small>Rollspelsregister för folkbokföring.</small></span></button>
+          <button class="mssrp-card" type="button" data-feature="admin" data-roleplay-tool="behorigheter"><span class="mssrp-card-icon">⚿</span><span><strong>Behörighetsstyrning</strong><small>Hantera roller och åtkomst i MSSRP.</small></span></button>
+        </div>
       </section>
 
       <section class="mssrp-section mssrp-portal-section mssrp-portal-page" id="tactical" data-portal-page="tactical" data-feature-section="tactical_plan">
@@ -2272,6 +2318,21 @@
 
   </div>
 
+
+
+  <div id="mssrp-tool-modal" class="modal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <div>
+          <span id="mssrp-tool-eyebrow" class="modal-eyebrow">ROLLSPEL</span>
+          <h2 id="mssrp-tool-title">Verktyg</h2>
+        </div>
+        <button class="modal-close" type="button" data-close="mssrp-tool-modal" aria-label="Stäng">&times;</button>
+      </div>
+      <div id="mssrp-tool-body" class="modal-body"></div>
+    </div>
+  </div>
 
   <!-- =========================================================
        TOAST
