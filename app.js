@@ -6,19 +6,13 @@
    PRO UI APPLICATION
    ============================================================ */
 
-const SUPABASE_URL =
-  'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
+const SUPABASE_URL = 'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_cBVpntso_6Bdo1oy_7JOLg_X_ALJWpn';
 
-const SUPABASE_ANON_KEY =
-  'sb_publishable_oclE6KnOIjMIuXCyKaFRiQ_Y8WZYgpo';
-
-const supabase =
-  window.supabase.createClient(
-    SUPABASE_URL,
-    SUPABASE_ANON_KEY
-  );
-
-
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
 /* ============================================================
    GLOBAL STATE
    ============================================================ */
