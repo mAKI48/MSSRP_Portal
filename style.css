@@ -3282,3 +3282,83 @@ a:focus-visible {
   }
 
 }
+
+
+/* ============================================================
+   MSSRP PORTAL
+   ============================================================ */
+.mssrp-header{background:#1b1b1b;border-bottom:2px solid #0b66d6;position:sticky;top:0;z-index:50;box-shadow:0 3px 12px rgba(0,0,0,.28)}
+.mssrp-header-inner{max-width:1180px;margin:auto;min-height:64px;display:flex;align-items:center;gap:28px;padding:0 18px}
+.mssrp-brand{display:flex;align-items:center;gap:10px;color:#fff;text-decoration:none;min-width:185px}.mssrp-brand-mark{font-size:28px;color:#4aa3ff}.mssrp-brand strong{display:block;font-size:18px;letter-spacing:.8px}.mssrp-brand span{display:block;color:#aaa;font-size:10px;margin-top:2px}
+.mssrp-nav{display:flex;align-items:center;gap:18px;flex:1}.mssrp-nav a{color:#eee;text-decoration:none;font-size:14px;white-space:nowrap}.mssrp-nav a:hover{color:#3d91ff}
+.mssrp-account{margin-left:auto}.mssrp-police-btn,.mssrp-primary{border:0;border-radius:6px;background:#0866d8;color:#fff;padding:10px 17px;font-weight:700;cursor:pointer}.mssrp-secondary{border:1px solid #343434;background:#232323;color:#eee;border-radius:6px;padding:10px 15px;cursor:pointer}.mssrp-logout{border:0;background:transparent;color:#aaa;cursor:pointer}.mssrp-user{display:flex;align-items:center;gap:8px;font-size:12px;color:#eee}.mssrp-role-badge,.mssrp-admin-badge{font-size:10px;padding:4px 7px;border-radius:5px;background:#0d315f;color:#8fc5ff}
+.mssrp-home{background:#202428}.mssrp-hero{background:linear-gradient(110deg,#095fca,#063e8c);color:#fff;min-height:235px;display:flex;align-items:center}.mssrp-hero-inner{max-width:1180px;width:100%;margin:auto;padding:48px 24px;display:flex;justify-content:space-between;align-items:center;gap:30px}.mssrp-kicker{font-size:12px;font-weight:800;letter-spacing:1.6px;color:#f0cf00}.mssrp-hero h1{font-size:40px;margin:10px 0 6px}.mssrp-hero p{font-size:17px;max-width:680px;color:#e9f2ff}.mssrp-hero-actions{display:flex;gap:10px;margin-top:20px}.mssrp-hero-status{min-width:230px;padding:18px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.16);border-radius:8px}.mssrp-hero-status strong,.mssrp-hero-status small{display:block}.mssrp-hero-status small{margin-top:7px;color:#c8dcf5}
+.mssrp-section{padding:46px 24px;max-width:1180px;margin:auto}.mssrp-section.dark{max-width:none;background:#111}.mssrp-section-title{text-align:center;margin-bottom:28px}.mssrp-section-title.split{display:flex;align-items:end;justify-content:space-between;text-align:left;max-width:1180px;margin-left:auto;margin-right:auto}.mssrp-section-title h2{color:#f0cf00;font-size:28px;margin:8px 0}.mssrp-section-title p{color:#bbb;margin:0}.mssrp-info-card{max-width:900px;margin:auto;background:#1b1b1b;border-left:4px solid #0874e9;padding:25px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);color:#eee}.mssrp-info-card p{line-height:1.6}.mssrp-info-card.compact{max-width:1180px}.mssrp-card-grid{max-width:1180px;margin:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.mssrp-card{display:flex;gap:15px;text-align:left;border:0;border-left:4px solid #0874e9;background:#202020;color:#eee;border-radius:7px;padding:20px;min-height:120px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.25)}.mssrp-card:hover{transform:translateY(-1px);background:#252525}.mssrp-card small,.mssrp-card strong{display:block}.mssrp-card small{color:#aaa;margin-top:8px;line-height:1.4}.mssrp-card-icon{font-size:24px;color:#54a8ff}.mssrp-card-icon.danger{color:#ff6868}.mssrp-card.restricted{border-left-color:#f0cf00}.mssrp-actions{display:flex;gap:10px}.mssrp-count{margin-left:6px;background:#0866d8;padding:2px 6px;border-radius:10px}.mssrp-locked{opacity:.72}.mssrp-locked::after{content:' 🔒';font-size:11px}
+.mssrp-admin-toolbar{max-width:1180px;margin:0 auto 12px;display:flex;gap:12px;align-items:center;color:#aaa}.mssrp-admin-table-wrap{max-width:1180px;margin:auto;overflow:auto;background:#1b1b1b;border-radius:8px}.mssrp-admin-table{width:100%;border-collapse:collapse;color:#eee}.mssrp-admin-table th,.mssrp-admin-table td{padding:12px 14px;border-bottom:1px solid #333;text-align:left}.mssrp-admin-table select{background:#222;color:#eee;border:1px solid #444;padding:8px;border-radius:5px}.mssrp-feature-content{margin-top:18px}.mssrp-module-note{padding:14px;border-left:3px solid #0874e9;background:#181818;display:flex;flex-direction:column;gap:5px}.mssrp-form-grid{display:grid;gap:14px;margin:18px 0}.mssrp-form-grid label{display:grid;gap:6px;color:#ccc}.mssrp-form-grid input,.mssrp-form-grid textarea{background:#171717;border:1px solid #3a3a3a;color:#fff;border-radius:5px;padding:10px}.mssrp-form-grid textarea{min-height:100px}.mssrp-footer{padding:24px;background:#0e0e0e;color:#aaa;display:flex;gap:25px;justify-content:center}.mssrp-footer strong{color:#fff}.mssrp-footer .status-dot{margin-right:5px}
+@media(max-width:950px){.mssrp-nav{gap:9px}.mssrp-nav a{font-size:12px}.mssrp-card-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.mssrp-header-inner{flex-wrap:wrap;padding:12px}.mssrp-nav{order:3;width:100%;overflow:auto;padding-bottom:4px}.mssrp-hero-inner{padding:35px 18px;display:block}.mssrp-hero-status{margin-top:25px}.mssrp-hero h1{font-size:32px}.mssrp-section{padding:35px 15px}.mssrp-card-grid{grid-template-columns:1fr}.mssrp-section-title.split{display:block}.mssrp-actions{margin-top:15px;flex-wrap:wrap}.mssrp-footer{flex-wrap:wrap;font-size:12px}}
+
+/* MSSRP protected portal tabs */
+.mssrp-nav a.hidden { display:none !important; }
+.mssrp-portal-section.hidden { display:none !important; }
+.mssrp-access-badge,.mssrp-admin-badge{display:inline-flex;align-items:center;padding:7px 10px;border:1px solid rgba(8,116,233,.5);border-radius:6px;background:rgba(8,102,216,.12);color:#79b8ff;font-size:11px;font-weight:800;letter-spacing:.7px}
+.mssrp-portal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:20px}
+.mssrp-mini-card{background:#111820;border:1px solid #273241;border-radius:7px;padding:16px;color:#eee}
+.mssrp-mini-card b,.mssrp-mini-card span{display:block}.mssrp-mini-card span{margin-top:6px;color:#9aa7b5;font-size:13px}
+.mssrp-portal-form{display:grid;gap:16px}.mssrp-portal-form label{display:grid;gap:7px;color:#ddd;font-weight:700}.mssrp-portal-form input,.mssrp-portal-form textarea{width:100%;box-sizing:border-box;background:#10151c;border:1px solid #303b49;color:#fff;border-radius:6px;padding:11px}.mssrp-portal-form textarea{min-height:120px;resize:vertical}
+.mssrp-status-row{display:flex;align-items:center;gap:9px;margin-top:18px;color:#b8c2cf}
+@media(max-width:700px){.mssrp-portal-grid{grid-template-columns:1fr}.mssrp-access-badge{margin-top:12px}}
+
+
+/* ============================================================
+   MSSRP LOGIN GATE
+   ============================================================ */
+
+.mssrp-login-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(5, 10, 18, 0.98);
+}
+
+.mssrp-login-gate.hidden { display: none; }
+
+.mssrp-login-gate-card {
+  width: min(460px, 100%);
+  padding: 32px;
+  border: 1px solid rgba(0, 119, 255, 0.35);
+  border-radius: 14px;
+  background: #17191d;
+  box-shadow: 0 24px 80px rgba(0,0,0,.45);
+}
+
+.login-gate-brand {
+  margin-bottom: 28px;
+}
+
+.mssrp-login-gate-card h1 {
+  margin: 8px 0 10px;
+}
+
+.mssrp-login-gate-card > p {
+  margin: 0 0 22px;
+  color: #b8c0cc;
+  line-height: 1.6;
+}
+
+.mssrp-login-gate-btn {
+  width: 100%;
+  margin-top: 10px;
+}
+
+body.mssrp-locked .screen {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* MSSRP Dispatch / ER:LC bridge additions */
+.inline-form{grid-template-columns:repeat(2,minmax(0,1fr));align-items:end}.inline-form label:last-of-type textarea{min-height:90px}.inline-form button{align-self:end}.dispatch-duty-card{max-width:1180px;margin:22px auto}.compact-title{margin-bottom:18px}.compact-title h3{margin:4px 0;color:#fff;font-size:20px}.mssrp-list{display:grid;gap:10px;margin-top:14px}.mssrp-list-item{display:grid;grid-template-columns:1fr 1.4fr auto;gap:18px;align-items:center;padding:14px 16px;background:#111820;border:1px solid #293646;border-radius:7px;color:#e8edf4}.mssrp-list-item>div{display:grid;gap:4px}.mssrp-list-item span,.mssrp-list-item small{color:#aeb9c7}.mssrp-list-item b{font-size:12px;text-transform:uppercase;color:#7fc1ff}.mssrp-portal-form select{width:100%;box-sizing:border-box;background:#10151c;border:1px solid #303b49;color:#fff;border-radius:6px;padding:11px}@media(max-width:800px){.inline-form{grid-template-columns:1fr}.mssrp-list-item{grid-template-columns:1fr}.mssrp-section-title.split{display:block}.mssrp-actions{flex-wrap:wrap}}
