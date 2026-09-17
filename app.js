@@ -10,7 +10,7 @@ const SUPABASE_URL =
   'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
 
 const SUPABASE_ANON_KEY =
-  'sb_publishable_oclE6KnOIjMUxIuCyKaFRiQ_Y8WZYgpo';
+  'sb_publishable_oclE6KnOIjMIuXCyKaFRiQ_Y8WZYgpo';
 
 const supabase =
   window.supabase.createClient(
