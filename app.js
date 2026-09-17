@@ -2,7 +2,7 @@
 'use strict';
 
 /* ============================================================
-   MSSRP
+   ER:LC TAKTISK PLANERARE
    PRO UI APPLICATION
    ============================================================ */
 
@@ -11,8 +11,6 @@ const SUPABASE_URL =
 
 const SUPABASE_ANON_KEY =
   'sb_publishable_oclE6KnOIjMUxIuCyKaFRiQ_Y8WZYgpo';
-
-const MSSRP_API_BASE = window.MSSRP_API_BASE || '/api';
 
 const supabase =
   window.supabase.createClient(
@@ -26,8 +24,6 @@ const supabase =
    ============================================================ */
 
 let currentUser = null;
-let accessRoles = [];
-let accessPermissions = new Set();
 let isLoginMode = true;
 let db = null;
 
@@ -1100,7 +1096,7 @@ function initDB() {
 
     const request =
       indexedDB.open(
-        'MSSRP-Portal',
+        'ERLC-Taktisk-Planerare',
         1
       );
 
@@ -1569,65 +1565,38 @@ async function checkAuth() {
 }
 
 
-function updateLoginGate() {
-  const gate = $('#login-gate');
-  if (!gate) return;
-  if (currentUser) {
-    gate.classList.add('hidden');
-    document.body.classList.remove('mssrp-locked');
-  } else {
-    gate.classList.remove('hidden');
-    document.body.classList.add('mssrp-locked');
-  }
-}
-
 function updateAuthUI() {
-  updateLoginGate();
-  const loginButton = $('#btn-login');
-  const userInfo = $('#user-info');
-  const email = $('#user-email');
-  const badge = $('#user-role-badge');
+
+  const loginButton =
+    $('#btn-login');
+
+  const userInfo =
+    $('#user-info');
+
+  const email =
+    $('#user-email');
 
   if (currentUser) {
+
     hide(loginButton);
     show(userInfo);
-    if (email) email.textContent = currentUser.email || '';
-    if (badge) badge.textContent = accessRoles.length ? accessRoles.map(formatRoleName).join(' + ') : 'Civil';
+
+    if (email) {
+
+      email.textContent =
+        currentUser.email || '';
+
+    }
+
   } else {
+
     show(loginButton);
     hide(userInfo);
-    if (badge) badge.textContent = 'Ej inloggad';
+
   }
-  updatePortalAccess();
+
 }
 
-
-async function submitGateAuth(mode = 'login') {
-  const email = $('#gate-email')?.value.trim();
-  const password = $('#gate-password')?.value;
-  const errorEl = $('#gate-error');
-  if (errorEl) { errorEl.textContent = ''; errorEl.classList.add('hidden'); }
-  if (!email || !password) {
-    if (errorEl) { errorEl.textContent = 'Fyll i e-post och lösenord.'; errorEl.classList.remove('hidden'); }
-    return;
-  }
-  try {
-    const result = mode === 'login'
-      ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password });
-    if (result.error) throw result.error;
-    currentUser = result.data?.user || null;
-    updateAuthUI();
-    await loadAccessProfile();
-    if (mode === 'signup' && !currentUser) {
-      if (errorEl) { errorEl.textContent = 'Kontot skapades. Bekräfta din e-post om Supabase kräver det och logga sedan in.'; errorEl.classList.remove('hidden'); }
-      return;
-    }
-    toast(mode === 'login' ? 'Du är nu inloggad.' : 'Kontot har skapats.');
-  } catch (error) {
-    if (errorEl) { errorEl.textContent = error.message || 'Inloggningen misslyckades.'; errorEl.classList.remove('hidden'); }
-  }
-}
 
 async function submitAuth() {
 
@@ -1698,7 +1667,6 @@ async function submitAuth() {
     closeModal('auth-modal');
 
     updateAuthUI();
-    await loadAccessProfile();
 
     if (!isLoginMode) {
 
@@ -1748,7 +1716,6 @@ async function logout() {
   currentUser = null;
 
   updateAuthUI();
-  await loadAccessProfile();
 
   toast(
     'Du har loggats ut.'
@@ -1758,296 +1725,10 @@ async function logout() {
 
 
 /* ============================================================
-   MSSRP ROLE / PERMISSION ACCESS
-   ============================================================ */
-
-function formatRoleName(role) {
-  const names = { civil:'Civil', polis:'Polis', fri:'FRI', ni:'NI', dispatcher:'Dispatcher', admin:'Admin' };
-  return names[role] || role;
-}
-
-function hasPermission(permission) {
-  return !!currentUser && (accessPermissions.has(permission) || accessRoles.includes('admin'));
-}
-
-async function loadAccessProfile() {
-  accessRoles = [];
-  accessPermissions = new Set();
-
-  if (!currentUser) {
-    updateAuthUI();
-    return;
-  }
-
-  try {
-    const { data: roleRows, error: roleError } = await supabase
-      .from('user_roles')
-      .select('role_id, roles(name)')
-      .eq('user_id', currentUser.id);
-    if (roleError) throw roleError;
-
-    accessRoles = (roleRows || []).map(r => r.roles?.name).filter(Boolean);
-    if (!accessRoles.length) accessRoles = ['civil'];
-
-    const roleIds = (roleRows || []).map(r => r.role_id).filter(Boolean);
-    if (roleIds.length) {
-      const { data: permissionRows, error: permissionError } = await supabase
-        .from('role_permissions')
-        .select('permission_id, permissions(name)')
-        .in('role_id', roleIds);
-      if (permissionError) throw permissionError;
-      (permissionRows || []).forEach(r => {
-        if (r.permissions?.name) accessPermissions.add(r.permissions.name);
-      });
-    }
-  } catch (error) {
-    console.error('Access profile failed:', error);
-    // Keep the UI locked if the permissions could not be verified.
-    accessRoles = [];
-    accessPermissions = new Set();
-    toast('Kunde inte verifiera behörigheter. Skyddade flikar är låsta.');
-  }
-
-  updateAuthUI();
-  if (hasPermission('admin')) await loadAdminUsers();
-  startDispatchPolling();
-}
-
-function updatePortalAccess() {
-  $$('[data-feature]').forEach(el => {
-    const feature = el.dataset.feature;
-    const allowed = hasPermission(feature);
-    if (allowed) {
-      el.classList.remove('hidden');
-      el.removeAttribute('aria-hidden');
-    } else {
-      el.classList.add('hidden');
-      el.setAttribute('aria-hidden', 'true');
-    }
-  });
-
-  $$('[data-feature-section]').forEach(section => {
-    const allowed = hasPermission(section.dataset.featureSection);
-    section.classList.toggle('hidden', !allowed);
-  });
-
-  const tacticalNav = $('[data-feature="tactical_plan"]');
-  if (tacticalNav && hasPermission('tactical_plan')) tacticalNav.classList.remove('hidden');
-
-  const adminPanel = $('#admin-panel');
-  if (adminPanel) adminPanel.classList.toggle('hidden', !hasPermission('admin'));
-}
-
-function requireFeature(permission, action) {
-  if (!currentUser) {
-    isLoginMode = true;
-    updateAuthModal();
-    showModal('auth-modal');
-    toast('Logga in för att använda denna funktion.');
-    return false;
-  }
-  if (!hasPermission(permission)) {
-    toast('Du saknar behörighet till denna funktion.');
-    return false;
-  }
-  if (typeof action === 'function') action();
-  return true;
-}
-
-async function loadAdminUsers() {
-  if (!hasPermission('admin')) return;
-  const targets = ['#admin-users', '#admin-users-top'];
-  const bodies = targets.map(sel => $(sel)).filter(Boolean);
-  if (!bodies.length) return;
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, display_name, user_roles(role_id, roles(name))')
-      .order('display_name');
-    if (error) throw error;
-    const roles = ['civil','polis','fri','ni','dispatcher','admin'];
-    const html = (data || []).map(user => {
-      const assigned = (user.user_roles || []).map(x => x.roles?.name).filter(Boolean);
-      const options = roles.map(role => `<option value="${role}">${formatRoleName(role)}</option>`).join('');
-      return `<tr><td>${escapeHtml(user.display_name || user.id)}</td><td>${assigned.map(formatRoleName).join(', ') || '—'}</td><td><select data-admin-user="${user.id}">${options}</select></td><td><button class="mssrp-secondary" data-admin-add-role="${user.id}">Ge roll</button></td></tr>`;
-    }).join('');
-    bodies.forEach(body => body.innerHTML = html || '<tr><td colspan="4">Inga användare hittades.</td></tr>');
-    $$('.mssrp-admin-table [data-admin-add-role]').forEach(btn => btn.addEventListener('click', async () => {
-      const userId = btn.dataset.adminAddRole;
-      const select = $(`[data-admin-user="${userId}"]`);
-      const roleName = select?.value;
-      if (!roleName) return;
-      const { data: role, error: roleError } = await supabase.from('roles').select('id').eq('name', roleName).single();
-      if (roleError) { toast(roleError.message); return; }
-      const { error } = await supabase.from('user_roles').upsert({ user_id:userId, role_id:role.id }, { onConflict:'user_id,role_id' });
-      if (error) { toast(error.message); return; }
-      toast(`${formatRoleName(roleName)} tilldelad.`);
-      await loadAdminUsers();
-    }));
-  } catch (error) {
-    console.error('Admin users failed:', error);
-    bodies.forEach(body => body.innerHTML = `<tr><td colspan="4">Kunde inte läsa användare.</td></tr>`);
-  }
-}
-
-async function mssrpApi(path, options = {}) {
-  const { data } = await supabase.auth.getSession();
-  const token = data?.session?.access_token;
-  if (!token) throw new Error('Du måste vara inloggad.');
-  const response = await fetch(`${MSSRP_API_BASE}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}), Authorization: `Bearer ${token}` }
-  });
-  let body = {};
-  try { body = await response.json(); } catch {}
-  if (!response.ok) throw new Error(body.error || `API-fel (${response.status})`);
-  return body;
-}
-
-function renderDispatchCalls(rows) {
-  const el = $('#dispatch-calls-list');
-  if (!el) return;
-  if (!rows?.length) { el.innerHTML = '<span>Inga aktiva larm.</span>'; return; }
-  el.innerHTML = rows.map(call => `<div class="mssrp-list-item"><div><strong>${escapeHtml(call.source === 'erlc' ? 'ER:LC 112' : 'MSSRP 112')}</strong><span>${escapeHtml(call.location || 'Okänd plats')}</span></div><div><span>${escapeHtml(call.caller_name || 'Okänd')}</span><small>${escapeHtml(call.description || '')}</small></div><b>${escapeHtml(call.status || 'new')}</b></div>`).join('');
-}
-
-function renderDispatchUnits(rows) {
-  const el = $('#dispatch-units-list');
-  if (!el) return;
-  if (!rows?.length) { el.innerHTML = '<span>Inga enheter i tjänst.</span>'; return; }
-  el.innerHTML = rows.map(unit => `<div class="mssrp-list-item"><div><strong>${escapeHtml(unit.callsign)}</strong><span>${escapeHtml(unit.unit_type || 'Enhet')}</span></div><b>${escapeHtml(unit.status || 'available')}</b></div>`).join('');
-}
-
-function updateDutyUI(unit) {
-  const badge = $('#duty-status-badge'), current = $('#duty-current'), off = $('#duty-off-btn'), form = $('#duty-form');
-  if (!badge || !current || !off || !form) return;
-  const onDuty = !!unit;
-  badge.textContent = onDuty ? `I TJÄNST · ${unit.callsign}` : 'EJ I TJÄNST';
-  current.innerHTML = onDuty ? `<span class="status-dot"></span><span>Enhet <strong>${escapeHtml(unit.callsign)}</strong> · ${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</span>` : '<span>Skapa ett enhetsnummer för att gå i tjänst.</span>';
-  off.disabled = !onDuty;
-  form.querySelectorAll('input,select,button[type="submit"]').forEach(el => { el.disabled = onDuty; });
-}
-
-async function refreshDispatchBoard() {
-  if (!hasPermission('dispatch')) return;
-  const [{ data: calls, error: callsError }, { data: units, error: unitsError }] = await Promise.all([
-    supabase.from('dispatch_calls').select('id,source,caller_name,location,description,status,priority,created_at').in('status', ['new','assigned','active']).order('created_at', { ascending: false }).limit(50),
-    supabase.from('dispatch_units').select('id,callsign,unit_type,status,user_id,assigned_call_id').order('callsign')
-  ]);
-  if (callsError) console.error('Dispatch calls:', callsError);
-  if (unitsError) console.error('Dispatch units:', unitsError);
-  renderDispatchCalls(calls || []);
-  renderDispatchUnits(units || []);
-  updateDutyUI((units || []).find(x => x.user_id === currentUser?.id) || null);
-}
-
-function startDispatchPolling() {
-  clearInterval(window.__mssrpDispatchTimer);
-  if (!hasPermission('dispatch')) return;
-  refreshDispatchBoard();
-  window.__mssrpDispatchTimer = setInterval(refreshDispatchBoard, 5000);
-}
-
-async function sendErlcAdminCommand(path, payload) {
-  const result = await mssrpApi(path, { method: 'POST', body: JSON.stringify(payload) });
-  toast('ER:LC-kommandot skickades.');
-  return result;
-}
-
-function bindPortalEvents() {
-  $$('[data-feature]').forEach(link => {
-    link.addEventListener('click', event => {
-      const feature = link.dataset.feature;
-      if (!hasPermission(feature)) {
-        event.preventDefault();
-        if (!currentUser) {
-          isLoginMode = true; updateAuthModal(); showModal('auth-modal');
-        }
-        toast(currentUser ? 'Du saknar behörighet till denna flik.' : 'Logga in för att se denna flik.');
-      }
-    });
-  });
-
-  $('#btn-new-op-portal')?.addEventListener('click', openNewOperationModal);
-  $('#btn-open-op-portal')?.addEventListener('click', () => document.querySelector('#operations')?.scrollIntoView({ behavior:'smooth' }));
-  $('#admin-refresh-top')?.addEventListener('click', loadAdminUsers);
-
-  $('#portal-112-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!requireFeature('call_112')) return;
-    const location = $('#portal-112-location')?.value.trim();
-    const description = $('#portal-112-description')?.value.trim();
-    if (!location || !description) return;
-    try {
-      const { error } = await supabase.from('dispatch_calls').insert({ caller_id: currentUser.id, location, description, priority:3 });
-      if (error) throw error;
-      event.target.reset();
-      toast('112-larm skickat till Dispatch.');
-    } catch (error) {
-      console.error(error);
-      toast(error.message || 'Kunde inte skicka larmet.');
-    }
-  });
-
-  $('#duty-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!requireFeature('dispatch')) return;
-    const callsign = $('#duty-callsign')?.value.trim();
-    const unitType = $('#duty-unit-type')?.value;
-    try {
-      await mssrpApi('/dispatch/on-duty', { method: 'POST', body: JSON.stringify({ callsign, unitType }) });
-      event.target.reset();
-      toast(`Enhet ${callsign} skapad. Du är nu i tjänst.`);
-      await refreshDispatchBoard();
-    } catch (error) { toast(error.message); }
-  });
-
-  $('#duty-off-btn')?.addEventListener('click', async () => {
-    if (!requireFeature('dispatch')) return;
-    try {
-      await mssrpApi('/dispatch/off-duty', { method: 'POST', body: '{}' });
-      toast('Du har gått ur tjänst.');
-      await refreshDispatchBoard();
-    } catch (error) { toast(error.message); }
-  });
-
-  $('#erlc-hint-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!requireFeature('admin')) return;
-    try { await sendErlcAdminCommand('/erlc/hint', { text: $('#erlc-hint-text')?.value.trim() }); event.target.reset(); }
-    catch (error) { toast(error.message); }
-  });
-
-  $('#erlc-message-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!requireFeature('admin')) return;
-    try { await sendErlcAdminCommand('/erlc/message', { text: $('#erlc-message-text')?.value.trim() }); event.target.reset(); }
-    catch (error) { toast(error.message); }
-  });
-
-  $('#erlc-pm-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!requireFeature('admin')) return;
-    try { await sendErlcAdminCommand('/erlc/pm', { player: $('#erlc-pm-player')?.value.trim(), text: $('#erlc-pm-text')?.value.trim() }); event.target.reset(); }
-    catch (error) { toast(error.message); }
-  });
-
-  startDispatchPolling();
-}
-
-/* ============================================================
    CREATE OPERATION
    ============================================================ */
 
 function openNewOperationModal() {
-
-  if (!currentUser) {
-    isLoginMode = true; updateAuthModal(); showModal('auth-modal'); toast('Logga in för att skapa en operation.'); return;
-  }
-
-  if (!hasPermission('tactical_plan')) {
-    toast('Du saknar behörighet till Taktisk plan.'); return;
-  }
 
   const form =
     $('#new-op-form');
@@ -2153,9 +1834,6 @@ async function createOperationFromForm(
    ============================================================ */
 
 function openOperation(id) {
-
-  if (!currentUser) { toast('Logga in för att öppna en operation.'); return; }
-  if (!hasPermission('tactical_plan')) { toast('Du saknar behörighet till Taktisk plan.'); return; }
 
   const operation =
     state.opsList.find(
@@ -6372,13 +6050,13 @@ function exportPlan() {
   const payload = {
 
     format:
-      'mssrpplan',
+      'erlcplan',
 
     version:
       2,
 
     application:
-      'MSSRP Taktisk Planerare',
+      'ER:LC Taktisk Planerare',
 
     exportedAt:
       new Date().toISOString(),
@@ -6419,7 +6097,7 @@ function exportPlan() {
   a.download =
     `${sanitizeFilename(
       state.currentOp.name
-    )}.mssrpplan`;
+    )}.erlcplan`;
 
   a.click();
 
@@ -6805,12 +6483,6 @@ function bindEvents() {
      AUTH
   ------------------------------ */
 
-  $('#gate-login')?.addEventListener('click', () => submitGateAuth('login'));
-  $('#gate-signup')?.addEventListener('click', () => submitGateAuth('signup'));
-  $('#gate-password')?.addEventListener('keydown', event => {
-    if (event.key === 'Enter') submitGateAuth('login');
-  });
-
   $('#btn-login')?.addEventListener(
     'click',
     () => {
@@ -7010,7 +6682,7 @@ function bindEvents() {
 
           if (
             type ===
-            'mssrpplan'
+            'erlcplan'
           ) {
 
             exportPlan();
@@ -7280,8 +6952,11 @@ function bindEvents() {
       button.addEventListener(
         'click',
         () => {
-          if (button.dataset.close === 'auth-modal' && !currentUser) return;
-          closeModal(button.dataset.close);
+
+          closeModal(
+            button.dataset.close
+          );
+
         }
       );
 
@@ -7303,8 +6978,11 @@ function bindEvents() {
         ?.addEventListener(
           'click',
           () => {
-            if (modal.id === 'auth-modal' && !currentUser) return;
-            modal.classList.remove('active');
+
+            modal.classList.remove(
+              'active'
+            );
+
           }
         );
 
@@ -7466,7 +7144,6 @@ function updateAuthModal() {
 async function init() {
 
   bindEvents();
-  bindPortalEvents();
 
   updateAuthModal();
 
@@ -7490,7 +7167,6 @@ async function init() {
   await loadOperations();
 
   await checkAuth();
-  await loadAccessProfile();
 
   setTool(
     'select'
