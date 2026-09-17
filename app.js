@@ -10,7 +10,7 @@ const SUPABASE_URL =
   'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
 
 const SUPABASE_ANON_KEY =
-  'sb_publishable_oclE6KnOIjMUxIuCyKaFRiQ_Y8WZYgpo';
+  'sb_publishable_cBVpntso_6Bdo1oy_7JOLg_X_ALJWpn';
 
 const MSSRP_API_BASE = window.MSSRP_API_BASE || '/api';
 
