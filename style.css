@@ -3362,3 +3362,28 @@ body.mssrp-locked .screen {
 
 /* MSSRP Dispatch / ER:LC bridge additions */
 .inline-form{grid-template-columns:repeat(2,minmax(0,1fr));align-items:end}.inline-form label:last-of-type textarea{min-height:90px}.inline-form button{align-self:end}.dispatch-duty-card{max-width:1180px;margin:22px auto}.compact-title{margin-bottom:18px}.compact-title h3{margin:4px 0;color:#fff;font-size:20px}.mssrp-list{display:grid;gap:10px;margin-top:14px}.mssrp-list-item{display:grid;grid-template-columns:1fr 1.4fr auto;gap:18px;align-items:center;padding:14px 16px;background:#111820;border:1px solid #293646;border-radius:7px;color:#e8edf4}.mssrp-list-item>div{display:grid;gap:4px}.mssrp-list-item span,.mssrp-list-item small{color:#aeb9c7}.mssrp-list-item b{font-size:12px;text-transform:uppercase;color:#7fc1ff}.mssrp-portal-form select{width:100%;box-sizing:border-box;background:#10151c;border:1px solid #303b49;color:#fff;border-radius:6px;padding:11px}@media(max-width:800px){.inline-form{grid-template-columns:1fr}.mssrp-list-item{grid-template-columns:1fr}.mssrp-section-title.split{display:block}.mssrp-actions{flex-wrap:wrap}}
+
+/* MSSRP portal tabs: show one page at a time */
+.mssrp-portal-page.portal-page-hidden { display: none !important; }
+.mssrp-nav a.portal-tab-active { color: #3d91ff; font-weight: 800; }
+body.mssrp-tab-mode { overflow-x: hidden; }
+
+/* MSSRP bug-fix/admin additions */
+.mssrp-form-grid-2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.mssrp-admin-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:14px 0; }
+.mssrp-admin-stats .mssrp-mini-card { min-height:86px; justify-content:center; }
+.mssrp-admin-stats .mssrp-mini-card b { font-size:24px; }
+.mssrp-admin-search { min-width:220px; flex:1; }
+.mssrp-admin-assign { display:flex; gap:8px; align-items:center; }
+.mssrp-admin-remove-list { display:flex; flex-wrap:wrap; gap:6px; }
+.mssrp-admin-remove-role { border:1px solid rgba(248,113,113,.35); background:rgba(127,29,29,.2); color:inherit; border-radius:8px; padding:6px 8px; cursor:pointer; }
+.mssrp-admin-table td small { display:block; opacity:.65; margin-top:3px; }
+.mssrp-permission-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:14px 0; }
+.mssrp-permission-item { display:flex; gap:10px; align-items:flex-start; padding:12px; border:1px solid var(--border,rgba(148,163,184,.2)); border-radius:10px; cursor:pointer; }
+.mssrp-permission-item span { display:flex; flex-direction:column; gap:3px; }
+.mssrp-permission-item small { opacity:.7; }
+@media (max-width:700px) {
+  .mssrp-form-grid-2,.mssrp-admin-stats,.mssrp-permission-grid { grid-template-columns:1fr; }
+  .mssrp-admin-assign { flex-direction:column; align-items:stretch; }
+  .mssrp-admin-search { min-width:0; width:100%; }
+}
