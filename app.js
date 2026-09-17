@@ -2342,6 +2342,374 @@ function navigateToPortalPage(pageId) {
   return true;
 }
 
+
+/* ============================================================
+   POLICE DATABASE + MSSRP ROLEPLAY TOOLS
+   ============================================================ */
+
+const ROLEPLAY_TOOL_CONFIG = {
+  krimvapen: {
+    title: 'Krimvapen',
+    description: 'Rollspelsregister för krimvapen.',
+    fields: [
+      ['name', 'Vapennamn / modell', 'text'],
+      ['owner', 'Ägare / karaktär', 'text'],
+      ['status', 'Status', 'text'],
+      ['notes', 'Anteckningar', 'textarea']
+    ]
+  },
+  bank: {
+    title: 'Bank',
+    description: 'Rollspelsrelaterad bankinformation.',
+    fields: [
+      ['name', 'Konto / karaktär', 'text'],
+      ['balance', 'Saldo', 'text'],
+      ['status', 'Status', 'text'],
+      ['notes', 'Anteckningar', 'textarea']
+    ]
+  },
+  fastigheter: {
+    title: 'Fastigheter',
+    description: 'Fastighetsregister.',
+    fields: [
+      ['name', 'Fastighet', 'text'],
+      ['owner', 'Ägare / karaktär', 'text'],
+      ['address', 'Adress', 'text'],
+      ['notes', 'Anteckningar', 'textarea']
+    ]
+  },
+  folkbokforing: {
+    title: 'Folkbokföringen',
+    description: 'Rollspelsregister för folkbokföring.',
+    fields: [
+      ['name', 'Namn', 'text'],
+      ['personal', 'Personuppgift / RP-ID', 'text'],
+      ['address', 'Adress', 'text'],
+      ['notes', 'Anteckningar', 'textarea']
+    ]
+  },
+  behorigheter: {
+    title: 'Behörighetsstyrning',
+    description: 'Hantera roller och åtkomst i MSSRP.',
+    admin: true,
+    fields: [
+      ['name', 'Användare / RP-namn', 'text'],
+      ['role', 'Roll', 'text'],
+      ['notes', 'Anteckningar', 'textarea']
+    ]
+  }
+};
+
+function roleplayStorageKey(tool) {
+  return `mssrp_roleplay_${currentUser?.id || 'guest'}_${tool}`;
+}
+
+function getRoleplayRecords(tool) {
+  try {
+    const value = JSON.parse(localStorage.getItem(roleplayStorageKey(tool)) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRoleplayRecords(tool, rows) {
+  localStorage.setItem(roleplayStorageKey(tool), JSON.stringify(rows));
+}
+
+function renderRoleplayRecords(tool, config) {
+  const list = $('#mssrp-roleplay-records');
+  if (!list) return;
+
+  const rows = getRoleplayRecords(tool);
+  list.innerHTML = rows.length ? rows.map((row, index) => {
+    const firstKey = config.fields[0][0];
+    const title = row[firstKey] || 'Namnlös post';
+    const details = config.fields
+      .slice(1)
+      .map(([key, label]) => row[key] ? `${label}: ${row[key]}` : '')
+      .filter(Boolean)
+      .join(' · ');
+
+    return `<div class="mssrp-tool-record">
+      <strong>${escapeHtml(title)}</strong>
+      <small>${escapeHtml(details || 'Ingen ytterligare information')}</small>
+      <div style="margin-top:8px">
+        <button type="button" class="mssrp-secondary" data-roleplay-delete="${index}">Ta bort</button>
+      </div>
+    </div>`;
+  }).join('') : '<div class="mssrp-status-row">Inga poster ännu.</div>';
+
+  list.querySelectorAll('[data-roleplay-delete]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rows = getRoleplayRecords(tool);
+      rows.splice(Number(button.dataset.roleplayDelete), 1);
+      saveRoleplayRecords(tool, rows);
+      renderRoleplayRecords(tool, config);
+    });
+  });
+}
+
+function openRoleplayTool(tool) {
+  const config = ROLEPLAY_TOOL_CONFIG[tool];
+  if (!config) return;
+
+  if (config.admin) {
+    if (!requireFeature('admin')) return;
+  } else if (!requireFeature('roleplay_system')) {
+    return;
+  }
+
+  if (config.admin && !hasPermission('admin')) {
+    toast('Du saknar behörighet till denna funktion.');
+    return;
+  }
+
+  const title = $('#mssrp-tool-title');
+  const eyebrow = $('#mssrp-tool-eyebrow');
+  const body = $('#mssrp-tool-body');
+  if (!body) return;
+
+  if (title) title.textContent = config.title;
+  if (eyebrow) eyebrow.textContent = config.admin ? 'ADMIN' : 'ROLLSPEL';
+
+  body.innerHTML = `
+    <div class="mssrp-section-title">
+      <p>${escapeHtml(config.description)}</p>
+    </div>
+    <form id="mssrp-roleplay-form" class="mssrp-tool-form">
+      ${config.fields.map(([key, label, type]) => `
+        <label>${escapeHtml(label)}
+          ${type === 'textarea'
+            ? `<textarea id="roleplay-${escapeHtml(key)}" maxlength="2000" placeholder="${escapeHtml(label)}"></textarea>`
+            : `<input id="roleplay-${escapeHtml(key)}" type="${escapeHtml(type)}" maxlength="200" placeholder="${escapeHtml(label)}">`}
+        </label>
+      `).join('')}
+      <div class="mssrp-actions">
+        <button class="mssrp-primary" type="submit">Spara post</button>
+        <button class="mssrp-secondary" type="button" id="mssrp-roleplay-clear">Rensa</button>
+      </div>
+    </form>
+    <div class="mssrp-kicker" style="margin-top:22px">REGISTRERADE POSTER</div>
+    <div id="mssrp-roleplay-records" class="mssrp-tool-modal-list"></div>
+    <small>Poster sparas lokalt i denna webbläsare. Supabase-tabellerna för dessa fyra rollspelsregister finns inte i den uppladdade appkoden.</small>
+  `;
+
+  $('#mssrp-roleplay-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+
+    const row = { created_at: new Date().toISOString() };
+    config.fields.forEach(([key]) => {
+      row[key] = $(`#roleplay-${CSS.escape(key)}`)?.value.trim() || '';
+    });
+
+    if (!row[config.fields[0][0]]) {
+      toast(`Fyll i ${config.fields[0][1].toLowerCase()}.`);
+      return;
+    }
+
+    const rows = getRoleplayRecords(tool);
+    rows.unshift(row);
+    saveRoleplayRecords(tool, rows);
+    event.target.reset();
+    renderRoleplayRecords(tool, config);
+    toast(`${config.title}: posten sparades.`);
+  });
+
+  $('#mssrp-roleplay-clear')?.addEventListener('click', () => {
+    $('#mssrp-roleplay-form')?.reset();
+  });
+
+  renderRoleplayRecords(tool, config);
+  showModal('mssrp-tool-modal');
+}
+
+async function searchPolicePersons() {
+  if (!requireFeature('police_database')) return;
+
+  const query = $('#police-person-search')?.value.trim() || '';
+  const results = $('#police-person-results');
+  if (!results) return;
+
+  results.innerHTML = '<span>Söker…</span>';
+
+  try {
+    let request = supabase
+      .from('profiles')
+      .select('id,display_name')
+      .order('display_name')
+      .limit(50);
+
+    if (query) {
+      // profiles.id is a UUID, so use an exact match for UUID searches.
+      const uuid = query.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      if (uuid) {
+        request = request.eq('id', query);
+      } else {
+        const safe = query.replace(/[%_]/g, '\\$&').replace(/,/g, ' ');
+        request = request.ilike('display_name', `%${safe}%`);
+      }
+    }
+
+    const { data, error } = await request;
+    if (error) throw error;
+
+    if (!data?.length) {
+      results.innerHTML = '<span>Inga personer hittades.</span>';
+      return;
+    }
+
+    results.innerHTML = data.map(person => `
+      <div class="mssrp-list-item">
+        <div>
+          <strong>${escapeHtml(person.display_name || 'Okänd')}</strong>
+          <small>${escapeHtml(person.id || '')}</small>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    console.error('Police person search failed:', error);
+    results.innerHTML = `<span>Kunde inte läsa polisregistret: ${escapeHtml(error.message || 'Okänt fel')}</span>`;
+  }
+}
+
+async function loadPoliceCases() {
+  if (!requireFeature('police_database')) return;
+
+  const results = $('#police-case-results');
+  if (!results) return;
+
+  results.innerHTML = '<span>Hämtar ärenden…</span>';
+
+  try {
+    const { data, error } = await supabase
+      .from('dispatch_calls')
+      .select('id,caller_name,location,description,status,priority,created_at')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+
+    if (!data?.length) {
+      results.innerHTML = '<span>Inga ärenden hittades.</span>';
+      return;
+    }
+
+    results.innerHTML = data.map(item => `
+      <div class="mssrp-list-item">
+        <div>
+          <strong>${escapeHtml(item.location || 'Okänd plats')}</strong>
+          <small>${escapeHtml(item.caller_name || 'Okänd')} · ${escapeHtml(item.status || 'new')}</small>
+          <small>${escapeHtml(item.description || '')}</small>
+        </div>
+        <b>P${escapeHtml(item.priority ?? '3')}</b>
+      </div>
+    `).join('');
+  } catch (error) {
+    console.error('Police cases failed:', error);
+    results.innerHTML = `<span>Kunde inte läsa ärenden: ${escapeHtml(error.message || 'Okänt fel')}</span>`;
+  }
+}
+
+function openNewPolicePost() {
+  if (!requireFeature('police_database')) return;
+
+  const title = $('#mssrp-tool-title');
+  const eyebrow = $('#mssrp-tool-eyebrow');
+  const body = $('#mssrp-tool-body');
+  if (!body) return;
+
+  if (title) title.textContent = 'Ny polispost';
+  if (eyebrow) eyebrow.textContent = 'POLISREGISTER';
+
+  body.innerHTML = `
+    <form id="mssrp-police-post-form" class="mssrp-tool-form">
+      <label>Namn / identifiering
+        <input id="police-post-name" required maxlength="120" placeholder="Namn eller RP-ID">
+      </label>
+      <label>Typ
+        <select id="police-post-type">
+          <option value="anteckning">Anteckning</option>
+          <option value="varning">Varning</option>
+          <option value="efterlysning">Efterlysning</option>
+          <option value="övrigt">Övrigt</option>
+        </select>
+      </label>
+      <label>Beskrivning
+        <textarea id="police-post-description" required maxlength="3000" placeholder="Beskriv registreringen…"></textarea>
+      </label>
+      <div class="mssrp-actions">
+        <button class="mssrp-primary" type="submit">Spara post</button>
+      </div>
+    </form>
+    <div class="mssrp-kicker" style="margin-top:22px">LOKALA POSTER</div>
+    <div id="mssrp-police-post-list" class="mssrp-tool-modal-list"></div>
+    <small>Den uppladdade appkoden innehåller ingen polisregister-tabell i Supabase, så nya poster sparas lokalt tills en sådan tabell kopplas in.</small>
+  `;
+
+  const key = `mssrp_police_posts_${currentUser.id}`;
+
+  const getRows = () => {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || '[]');
+      return Array.isArray(value) ? value : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const render = () => {
+    const list = $('#mssrp-police-post-list');
+    if (!list) return;
+
+    const rows = getRows();
+    list.innerHTML = rows.length ? rows.map((row, index) => `
+      <div class="mssrp-tool-record">
+        <strong>${escapeHtml(row.name)} · ${escapeHtml(row.type)}</strong>
+        <small>${escapeHtml(row.description)}</small>
+        <div style="margin-top:8px">
+          <button type="button" class="mssrp-secondary" data-police-post-delete="${index}">Ta bort</button>
+        </div>
+      </div>
+    `).join('') : '<div class="mssrp-status-row">Inga lokala poster ännu.</div>';
+
+    list.querySelectorAll('[data-police-post-delete]').forEach(button => {
+      button.addEventListener('click', () => {
+        const rows = getRows();
+        rows.splice(Number(button.dataset.policePostDelete), 1);
+        localStorage.setItem(key, JSON.stringify(rows));
+        render();
+      });
+    });
+  };
+
+  $('#mssrp-police-post-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+
+    const row = {
+      name: $('#police-post-name')?.value.trim(),
+      type: $('#police-post-type')?.value,
+      description: $('#police-post-description')?.value.trim(),
+      created_at: new Date().toISOString()
+    };
+
+    if (!row.name || !row.description) {
+      toast('Fyll i namn och beskrivning.');
+      return;
+    }
+
+    const rows = getRows();
+    rows.unshift(row);
+    localStorage.setItem(key, JSON.stringify(rows));
+    event.target.reset();
+    render();
+    toast('Polisposten sparades.');
+  });
+
+  render();
+  showModal('mssrp-tool-modal');
+}
+
 function bindPortalEvents() {
   // One delegated handler covers both static and dynamically rendered buttons/cards.
   document.addEventListener('click', event => {
@@ -2358,6 +2726,10 @@ function bindPortalEvents() {
       return;
     }
     if (featureEl.tagName !== 'A') event.preventDefault();
+    if (featureEl.dataset.roleplayTool) {
+      openRoleplayTool(featureEl.dataset.roleplayTool);
+      return;
+    }
     const pageMap = {
       call_112:'112', police_database:'police', dispatch:'dispatch', roleplay_system:'roleplay',
       tactical_plan:'tactical', roblox_integration:'roblox', admin:'admin'
@@ -2472,6 +2844,18 @@ function bindPortalEvents() {
     if (!requireFeature('admin')) return;
     try { await sendErlcAdminCommand('/erlc/pm', { player: $('#erlc-pm-player')?.value.trim(), text: $('#erlc-pm-text')?.value.trim() }); event.target.reset(); }
     catch (error) { toast(error.message); }
+  });
+
+  $('#police-person-search-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+    searchPolicePersons();
+  });
+  $('#police-load-cases')?.addEventListener('click', loadPoliceCases);
+  $('#police-new-post')?.addEventListener('click', openNewPolicePost);
+
+  $$('[data-roleplay-tool]').forEach(button => {
+    if (button.dataset.feature) return;
+    button.addEventListener('click', () => openRoleplayTool(button.dataset.roleplayTool));
   });
 
   $$('[data-shop-item]').forEach(item => item.addEventListener('click', () => {
