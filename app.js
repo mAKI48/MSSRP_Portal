@@ -31,6 +31,8 @@ const state = {
 
   currentOp: null,
 
+  currentFloorId: null,
+
   opsList: [],
 
   stage: null,
@@ -287,6 +289,602 @@ const SYMBOLS = {
 };
 
 
+
+/* ============================================================
+   MULTI-FLOOR MAPS
+   ============================================================ */
+
+function createDefaultFloor(data = {}, index = 0) {
+
+  return {
+
+    id:
+      data.id ||
+      crypto.randomUUID(),
+
+    name:
+      data.name ||
+      `Våning ${index + 1}`,
+
+    map:
+      data.map ||
+      null,
+
+    mapLocked:
+      Boolean(data.mapLocked),
+
+    objects:
+      Array.isArray(data.objects)
+        ? data.objects
+        : []
+
+  };
+
+}
+
+
+function normalizeOperationFloors(operation) {
+
+  if (!operation) return null;
+
+  if (
+    !Array.isArray(operation.floors) ||
+    !operation.floors.length
+  ) {
+
+    operation.floors = [
+      createDefaultFloor(
+        {
+          id:
+            operation.activeFloorId ||
+            undefined,
+
+          name:
+            'Våning 1',
+
+          map:
+            operation.map ||
+            null,
+
+          mapLocked:
+            operation.mapLocked,
+
+          objects:
+            Array.isArray(operation.objects)
+              ? operation.objects
+              : []
+
+        },
+        0
+      )
+    ];
+
+  } else {
+
+    operation.floors =
+      operation.floors.map(
+        (floor, index) =>
+          createDefaultFloor(
+            floor || {},
+            index
+          )
+      );
+
+  }
+
+  const active =
+    operation.floors.find(
+      floor =>
+        floor.id ===
+        operation.activeFloorId
+    ) ||
+    operation.floors[0];
+
+  operation.activeFloorId =
+    active.id;
+
+  return operation;
+
+}
+
+
+function getCurrentFloor() {
+
+  if (!state.currentOp) return null;
+
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  return (
+    state.currentOp.floors.find(
+      floor =>
+        floor.id ===
+        state.currentFloorId
+    ) ||
+    state.currentOp.floors.find(
+      floor =>
+        floor.id ===
+        state.currentOp.activeFloorId
+    ) ||
+    state.currentOp.floors[0]
+  );
+
+}
+
+
+function syncCurrentFloorToOperation() {
+
+  if (!state.currentOp) return;
+
+  const floor =
+    getCurrentFloor();
+
+  if (!floor) return;
+
+  floor.map =
+    state.currentOp.map ||
+    null;
+
+  floor.mapLocked =
+    Boolean(
+      state.currentOp.mapLocked
+    );
+
+  floor.objects =
+    Array.isArray(
+      state.currentOp.objects
+    )
+      ? state.currentOp.objects
+      : [];
+
+  floor.id =
+    floor.id ||
+    state.currentFloorId ||
+    crypto.randomUUID();
+
+  state.currentFloorId =
+    floor.id;
+
+  state.currentOp.activeFloorId =
+    floor.id;
+
+}
+
+
+function activateFloor(
+  floorId,
+  options = {}
+) {
+
+  if (!state.currentOp) return;
+
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  syncCurrentFloorToOperation();
+
+  const floor =
+    state.currentOp.floors.find(
+      item =>
+        item.id === floorId
+    ) ||
+    state.currentOp.floors[0];
+
+  if (!floor) return;
+
+  state.currentFloorId =
+    floor.id;
+
+  state.currentOp.activeFloorId =
+    floor.id;
+
+  state.currentOp.map =
+    floor.map ||
+    null;
+
+  state.currentOp.mapLocked =
+    Boolean(
+      floor.mapLocked
+    );
+
+  state.currentOp.objects =
+    floor.objects;
+
+  state.mapLocked =
+    Boolean(
+      floor.mapLocked
+    );
+
+  if (state.stage) {
+
+    clearSelection();
+
+    if (floor.map) {
+
+      loadMapFromData(
+        floor.map
+      );
+
+    } else {
+
+      clearMap();
+
+      renderOperationObjects();
+
+    }
+
+  }
+
+  renderFloorControls();
+
+  updateMapUI();
+
+  if (!options.silent) {
+
+    pushHistory();
+    scheduleSave();
+
+  }
+
+}
+
+
+function ensureFloorControls() {
+
+  const container =
+    $('#konva-container');
+
+  if (!container) return null;
+
+  let controls =
+    $('#floor-controls');
+
+  if (controls) return controls;
+
+  controls =
+    document.createElement('div');
+
+  controls.id =
+    'floor-controls';
+
+  controls.style.cssText = `
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+    margin:0 0 8px 0;
+    padding:8px 10px;
+    border:1px solid rgba(148,163,184,.25);
+    border-radius:8px;
+    background:rgba(15,23,42,.65);
+  `;
+
+  const parent =
+    container.parentElement;
+
+  if (parent) {
+
+    parent.insertBefore(
+      controls,
+      container
+    );
+
+  }
+
+  return controls;
+
+}
+
+
+function renderFloorControls() {
+
+  const controls =
+    ensureFloorControls();
+
+  if (!controls || !state.currentOp) return;
+
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  controls.innerHTML = '';
+
+  const label =
+    document.createElement('span');
+
+  label.textContent =
+    'Våningar:';
+
+  label.style.fontWeight =
+    '700';
+
+  controls.appendChild(label);
+
+  state.currentOp.floors.forEach(
+    floor => {
+
+      const button =
+        document.createElement('button');
+
+      button.type =
+        'button';
+
+      button.textContent =
+        floor.name;
+
+      button.dataset.floorId =
+        floor.id;
+
+      button.style.cssText = `
+        border:1px solid rgba(148,163,184,.4);
+        border-radius:6px;
+        padding:5px 10px;
+        cursor:pointer;
+        font:inherit;
+        background:${
+          floor.id === state.currentFloorId
+            ? 'rgba(59,130,246,.35)'
+            : 'rgba(15,23,42,.5)'
+        };
+        color:inherit;
+      `;
+
+      button.onclick =
+        () => switchFloor(
+          floor.id
+        );
+
+      button.ondblclick =
+        () => renameFloor(
+          floor.id
+        );
+
+      controls.appendChild(
+        button
+      );
+
+    }
+  );
+
+  const add =
+    document.createElement('button');
+
+  add.type =
+    'button';
+
+  add.textContent =
+    '+ Lägg till våning';
+
+  add.style.cssText = `
+    border:1px solid rgba(34,197,94,.5);
+    border-radius:6px;
+    padding:5px 10px;
+    cursor:pointer;
+    font:inherit;
+  `;
+
+  add.onclick =
+    addFloor;
+
+  controls.appendChild(add);
+
+  if (state.currentOp.floors.length > 1) {
+
+    const rename =
+      document.createElement('button');
+
+    rename.type =
+      'button';
+
+    rename.textContent =
+      'Byt namn';
+
+    rename.onclick =
+      () => renameFloor(
+        state.currentFloorId
+      );
+
+    controls.appendChild(
+      rename
+    );
+
+    const remove =
+      document.createElement('button');
+
+    remove.type =
+      'button';
+
+    remove.textContent =
+      'Ta bort våning';
+
+    remove.onclick =
+      () => deleteFloor(
+        state.currentFloorId
+      );
+
+    controls.appendChild(
+      remove
+    );
+
+  }
+
+}
+
+
+function switchFloor(floorId) {
+
+  if (
+    !state.currentOp ||
+    floorId === state.currentFloorId
+  ) return;
+
+  activateFloor(
+    floorId
+  );
+
+  toast(
+    `Bytte till ${getCurrentFloor()?.name || 'våning'}.`
+  );
+
+}
+
+
+function addFloor() {
+
+  if (!state.currentOp) return;
+
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  syncCurrentFloorToOperation();
+
+  const floor =
+    createDefaultFloor(
+      {
+        name:
+          `Våning ${
+            state.currentOp.floors.length + 1
+          }`
+      },
+      state.currentOp.floors.length
+    );
+
+  state.currentOp.floors.push(
+    floor
+  );
+
+  activateFloor(
+    floor.id,
+    {
+      silent: true
+    }
+  );
+
+  if (state.stage) {
+
+    clearSelection();
+
+    clearMap();
+
+    renderOperationObjects();
+
+  }
+
+  renderFloorControls();
+  updateMapUI();
+  pushHistory();
+  scheduleSave();
+
+  toast(
+    `${floor.name} skapad. Ladda upp en karta för våningen.`
+  );
+
+}
+
+
+function renameFloor(floorId) {
+
+  if (!state.currentOp) return;
+
+  const floor =
+    state.currentOp.floors.find(
+      item =>
+        item.id === floorId
+    );
+
+  if (!floor) return;
+
+  const name =
+    window.prompt(
+      'Namn på våningen:',
+      floor.name
+    );
+
+  if (
+    name === null ||
+    !name.trim()
+  ) return;
+
+  floor.name =
+    name.trim();
+
+  renderFloorControls();
+  pushHistory();
+  scheduleSave();
+
+}
+
+
+function deleteFloor(floorId) {
+
+  if (!state.currentOp) return;
+
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  if (
+    state.currentOp.floors.length <= 1
+  ) {
+
+    toast(
+      'Minst en våning måste finnas.'
+    );
+
+    return;
+
+  }
+
+  const floor =
+    state.currentOp.floors.find(
+      item =>
+        item.id === floorId
+    );
+
+  if (!floor) return;
+
+  if (
+    !window.confirm(
+      `Ta bort "${floor.name}"? Kartan och objekten på våningen tas bort.`
+    )
+  ) return;
+
+  const index =
+    state.currentOp.floors.indexOf(
+      floor
+    );
+
+  state.currentOp.floors.splice(
+    index,
+    1
+  );
+
+  activateFloor(
+    state.currentOp.floors[
+      Math.max(
+        0,
+        index - 1
+      )
+    ].id,
+    {
+      silent: true
+    }
+  );
+
+  renderFloorControls();
+  pushHistory();
+  scheduleSave();
+
+  toast(
+    `${floor.name} borttagen.`
+  );
+
+}
+
+
 /* ============================================================
    DEFAULT OPERATION
    ============================================================ */
@@ -295,7 +893,7 @@ function createDefaultOperation(data = {}) {
 
   const now = new Date();
 
-  return {
+  const operation = {
 
     id:
       data.id ||
@@ -361,6 +959,29 @@ function createDefaultOperation(data = {}) {
         ? data.objects
         : [],
 
+    floors:
+      Array.isArray(data.floors) &&
+      data.floors.length
+        ? data.floors
+        : [
+            createDefaultFloor(
+              {
+                name: 'Våning 1',
+                map: data.map || null,
+                mapLocked: data.mapLocked,
+                objects:
+                  Array.isArray(data.objects)
+                    ? data.objects
+                    : []
+              },
+              0
+            )
+          ],
+
+    activeFloorId:
+      data.activeFloorId ||
+      null,
+
     groups:
       Array.isArray(data.groups)
         ? data.groups
@@ -380,6 +1001,9 @@ function createDefaultOperation(data = {}) {
       now.toISOString()
 
   };
+
+  normalizeOperationFloors(operation);
+  return operation;
 
 }
 
@@ -1229,6 +1853,22 @@ function openOperation(id) {
   state.currentOp =
     structuredClone(operation);
 
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  state.currentFloorId =
+    state.currentOp.activeFloorId ||
+    state.currentOp.floors[0]?.id ||
+    null;
+
+  activateFloor(
+    state.currentFloorId,
+    {
+      silent: true
+    }
+  );
+
   openEditor();
 
 }
@@ -1246,7 +1886,26 @@ function openEditor() {
 
   updateHeader();
 
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  state.currentFloorId =
+    state.currentOp.activeFloorId ||
+    state.currentOp.floors[0]?.id ||
+    null;
+
+  activateFloor(
+    state.currentFloorId,
+    {
+      silent: true
+    }
+  );
+
   initStage();
+
+  ensureFloorControls();
+  renderFloorControls();
 
   renderOperationObjects();
 
@@ -1290,6 +1949,8 @@ function closeEditor() {
   );
 
   state.currentOp = null;
+
+  state.currentFloorId = null;
 
   destroyStage();
 
@@ -4564,12 +5225,29 @@ function restoreHistorySnapshot(
       snapshot
     );
 
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  state.currentFloorId =
+    state.currentOp.activeFloorId ||
+    state.currentOp.floors[0]?.id ||
+    null;
+
+  activateFloor(
+    state.currentFloorId,
+    {
+      silent: true
+    }
+  );
+
   state.mapLocked =
     Boolean(
       state.currentOp.mapLocked
     );
 
   updateHeader();
+  renderFloorControls();
 
   renderOperationObjects();
 
@@ -5090,6 +5768,12 @@ async function saveCurrentOperation() {
 
   if (!state.currentOp) return;
 
+  normalizeOperationFloors(
+    state.currentOp
+  );
+
+  syncCurrentFloorToOperation();
+
   state.currentOp.updatedAt =
     new Date().toISOString();
 
@@ -5369,7 +6053,7 @@ function exportPlan() {
       'erlcplan',
 
     version:
-      1,
+      2,
 
     application:
       'ER:LC Taktisk Planerare',
