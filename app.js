@@ -2309,10 +2309,10 @@ function openDispatchCall(index) {
   <div class="cad-assign-box" style="margin-top:12px"><span class="cad-label">TILLDELA ENHET</span><div class="cad-assign-row"><select id="cad-unit-select"><option value="">Välj ledig enhet…</option>${available.filter(u => !u.assigned_call_id || assigned.some(a => a.id === u.id)).map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.callsign)} · ${escapeHtml(u.unit_type || 'Enhet')}</option>`).join('')}</select><button id="cad-assign-btn" class="mssrp-primary" type="button">Tilldela</button></div></div>
   <div class="cad-call-actions">${assigned.length ? assigned.map(u => `<button class="mssrp-secondary" type="button" data-unassign-unit="${escapeHtml(u.id)}">Ta bort ${escapeHtml(u.callsign)}</button>`).join('') : '<span class="mssrp-status-row">Inga enheter är tilldelade.</span>'}</div>`;
   $('#cad-delete-call')?.addEventListener('click', async () => {
-    if (!window.confirm(`Ta bort larm #${call.id}? Detta går inte att ångra.`)) return;
+    if (!window.confirm(`Ta bort larm #${call.id}?`)) return;
 
     try {
-      // Frigör alla enheter som är kopplade till larmet
+      // Frigör enheter som är kopplade till larmet
       const { error: unitError } = await supabase
         .from('dispatch_units')
         .update({
@@ -2323,27 +2323,37 @@ function openDispatchCall(index) {
 
       if (unitError) throw unitError;
 
-      // Markera larmet som borttaget. Dispatch-listan visar bara
-      // new, assigned och active, så larmet försvinner direkt.
-      const { error: callError } = await supabase
+      // Markera larmet som borttaget i Supabase
+      const { data: updatedCall, error: callError } = await supabase
         .from('dispatch_calls')
         .update({ status: 'deleted' })
-        .eq('id', call.id);
+        .eq('id', call.id)
+        .select('id,status');
 
       if (callError) throw callError;
 
-      // Ta bort det direkt från cache/UI så användaren slipper vänta på polling.
-      dispatchCallsCache = (dispatchCallsCache || []).filter(c => c.id !== call.id);
+      if (!updatedCall || updatedCall.length === 0) {
+        throw new Error(
+          'Larmet kunde inte uppdateras i Supabase. Kontrollera RLS för dispatch_calls.'
+        );
+      }
+
+      // Ta bort det direkt ur listan
+      dispatchCallsCache = dispatchCallsCache.filter(
+        c => String(c.id) !== String(call.id)
+      );
 
       closeModal('mssrp-tool-modal');
       renderDispatchCalls(dispatchCallsCache);
+
       toast(`Larm #${call.id} togs bort.`);
 
       await refreshDispatchBoard();
       await loadAdminStats();
+
     } catch (e) {
       console.error('Remove dispatch call failed:', e);
-      toast(e.message || 'Kunde inte ta bort larmet.');
+      toast(`Kunde inte ta bort larmet: ${e.message}`);
     }
   });
 
