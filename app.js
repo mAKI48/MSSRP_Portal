@@ -2283,8 +2283,9 @@ function renderDispatchUnits(rows) {
   const active = rows?.filter(x => x.status !== 'off-duty') || [];
   $('#dispatch-unit-count') && ($('#dispatch-unit-count').textContent = String(active.length));
   $('#dispatch-assigned-count') && ($('#dispatch-assigned-count').textContent = String(active.filter(x => x.assigned_call_id).length));
-  if (!rows?.length) { el.innerHTML = '<div class="cad-empty">Inga enheter i tjänst.</div>'; return; }
-  el.innerHTML = rows.map(unit => `<div class="cad-unit"><div class="cad-unit-left"><span class="cad-unit-dot ${unit.status === 'assigned' ? 'busy' : unit.status === 'off-duty' ? 'off' : ''}"></span><div><strong>${escapeHtml(unit.callsign)}</strong><small>${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</small></div></div><span class="cad-assignment">${unit.assigned_call_id ? '#'+escapeHtml(unit.assigned_call_id) : 'LEDIG'}</span></div>`).join('');
+  const visibleRows = active;
+  if (!visibleRows.length) { el.innerHTML = '<div class="cad-empty">Inga enheter i tjänst.</div>'; return; }
+  el.innerHTML = visibleRows.map(unit => `<div class="cad-unit"><div class="cad-unit-left"><span class="cad-unit-dot ${unit.status === 'assigned' ? 'busy' : unit.status === 'off-duty' ? 'off' : ''}"></span><div><strong>${escapeHtml(unit.callsign)}</strong><small>${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</small></div></div><span class="cad-assignment">${unit.assigned_call_id ? '#'+escapeHtml(unit.assigned_call_id) : 'LEDIG'}</span></div>`).join('');
 }
 
 function openDispatchCall(index) {
@@ -2304,8 +2305,24 @@ function openDispatchCall(index) {
     <div class="cad-detail"><small>Källa</small><strong>${escapeHtml(call.source === 'erlc' ? 'ER:LC 112' : 'MSSRP 112')}</strong></div>
   </div>
   <div class="cad-detail"><small>Händelse / lagöverträdelser</small><strong>${escapeHtml(call.legal_violations || 'Ej angivet')}</strong><p>${escapeHtml(call.description || '')}</p></div>
+  <div class="cad-call-actions"><button id="cad-delete-call" class="mssrp-secondary" type="button">Ta bort larm</button></div>
   <div class="cad-assign-box" style="margin-top:12px"><span class="cad-label">TILLDELA ENHET</span><div class="cad-assign-row"><select id="cad-unit-select"><option value="">Välj ledig enhet…</option>${available.filter(u => !u.assigned_call_id || assigned.some(a => a.id === u.id)).map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.callsign)} · ${escapeHtml(u.unit_type || 'Enhet')}</option>`).join('')}</select><button id="cad-assign-btn" class="mssrp-primary" type="button">Tilldela</button></div></div>
   <div class="cad-call-actions">${assigned.length ? assigned.map(u => `<button class="mssrp-secondary" type="button" data-unassign-unit="${escapeHtml(u.id)}">Ta bort ${escapeHtml(u.callsign)}</button>`).join('') : '<span class="mssrp-status-row">Inga enheter är tilldelade.</span>'}</div>`;
+  $('#cad-delete-call')?.addEventListener('click', async () => {
+    if (!window.confirm(`Ta bort larm #${call.id}? Detta går inte att ångra.`)) return;
+    try {
+      const { error } = await supabase.from('dispatch_calls').delete().eq('id', call.id);
+      if (error) throw error;
+      closeModal('mssrp-tool-modal');
+      toast(`Larm #${call.id} togs bort.`);
+      await refreshDispatchBoard();
+      await loadAdminStats();
+    } catch (e) {
+      console.error('Delete dispatch call failed:', e);
+      toast(e.message || 'Kunde inte ta bort larmet. Kontrollera Supabase RLS.');
+    }
+  });
+
   $('#cad-assign-btn')?.addEventListener('click', async () => {
     const unitId = $('#cad-unit-select')?.value;
     if (!unitId) return toast('Välj en enhet.');
@@ -2943,27 +2960,101 @@ function bindPortalEvents() {
   $('#duty-form')?.addEventListener('submit', async event => {
     event.preventDefault();
     if (!requireFeature('dispatch')) return;
+
     const callsign = $('#duty-callsign')?.value.trim();
-    const unitType = $('#duty-unit-type')?.value;
+    const unitType = $('#duty-unit-type')?.value || 'patrol';
     if (!callsign) { toast('Ange ett enhetsnummer.'); return; }
+    if (!currentUser?.id) { toast('Du måste vara inloggad.'); return; }
+
     const button = event.target.querySelector('button[type="submit"]');
     if (button) button.disabled = true;
+
     try {
-      await mssrpApi('/dispatch/on-duty', { method: 'POST', body: JSON.stringify({ callsign, unitType }) });
-      event.target.reset();
-      toast(`Enhet ${callsign} skapad. Du är nu i tjänst.`);
+      // Do not depend on the optional /api backend for duty status.
+      // Create the unit directly in Supabase instead.
+      const { data: existing, error: existingError } = await supabase
+        .from('dispatch_units')
+        .select('id,callsign,unit_type,status,user_id,assigned_call_id')
+        .eq('user_id', currentUser.id)
+        .maybeSingle();
+
+      if (existingError) throw existingError;
+
+      // Prevent two active units with the same callsign.
+      const { data: sameCallsign, error: callsignError } = await supabase
+        .from('dispatch_units')
+        .select('id,user_id,callsign,status')
+        .eq('callsign', callsign)
+        .neq('user_id', currentUser.id)
+        .neq('status', 'off-duty')
+        .limit(1);
+
+      if (callsignError) throw callsignError;
+      if (sameCallsign?.length) {
+        throw new Error(`Enhetsnumret ${callsign} används redan.`);
+      }
+
+      let unit;
+
+      if (existing?.id) {
+        const { data, error } = await supabase
+          .from('dispatch_units')
+          .update({
+            callsign,
+            unit_type: unitType,
+            status: existing.assigned_call_id ? 'assigned' : 'available'
+          })
+          .eq('id', existing.id)
+          .select('id,callsign,unit_type,status,user_id,assigned_call_id')
+          .single();
+        if (error) throw error;
+        unit = data;
+      } else {
+        const { data, error } = await supabase
+          .from('dispatch_units')
+          .insert({
+            callsign,
+            unit_type: unitType,
+            status: 'available',
+            user_id: currentUser.id,
+            assigned_call_id: null
+          })
+          .select('id,callsign,unit_type,status,user_id,assigned_call_id')
+          .single();
+        if (error) throw error;
+        unit = data;
+      }
+
+      toast(`Enhet ${unit.callsign} är nu i tjänst.`);
       await refreshDispatchBoard();
-    } catch (error) { toast(error.message); }
-    finally { if (button) button.disabled = false; }
+    } catch (error) {
+      console.error('Going on duty failed:', error);
+      toast(error.message || 'Kunde inte skapa enheten. Kontrollera Supabase RLS och kolumnerna i dispatch_units.');
+    } finally {
+      if (button) button.disabled = false;
+    }
   });
 
   $('#duty-off-btn')?.addEventListener('click', async () => {
     if (!requireFeature('dispatch')) return;
+    if (!currentUser?.id) return toast('Du måste vara inloggad.');
+
     try {
-      await mssrpApi('/dispatch/off-duty', { method: 'POST', body: '{}' });
+      const { error } = await supabase
+        .from('dispatch_units')
+        .update({
+          status: 'off-duty',
+          assigned_call_id: null
+        })
+        .eq('user_id', currentUser.id);
+
+      if (error) throw error;
       toast('Du har gått ur tjänst.');
       await refreshDispatchBoard();
-    } catch (error) { toast(error.message); }
+    } catch (error) {
+      console.error('Going off duty failed:', error);
+      toast(error.message || 'Kunde inte gå ur tjänst.');
+    }
   });
 
   $('#erlc-hint-form')?.addEventListener('submit', async event => {
