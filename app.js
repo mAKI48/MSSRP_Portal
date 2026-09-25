@@ -2311,8 +2311,25 @@ function openDispatchCall(index) {
   $('#cad-delete-call')?.addEventListener('click', async () => {
     if (!window.confirm(`Ta bort larm #${call.id}? Detta går inte att ångra.`)) return;
     try {
-      const { error } = await supabase.from('dispatch_calls').delete().eq('id', call.id);
+      // Soft-delete first. This works even when Supabase RLS blocks DELETE.
+      // The dispatch board only shows new/assigned/active calls, so deleted calls disappear immediately.
+      let { error } = await supabase
+        .from('dispatch_calls')
+        .update({ status: 'deleted' })
+        .eq('id', call.id);
+
+      if (error) {
+        console.error('Soft-delete dispatch call failed:', error);
+        // Fallback to a real DELETE if the database allows it.
+        const result = await supabase
+          .from('dispatch_calls')
+          .delete()
+          .eq('id', call.id);
+        error = result.error;
+      }
+
       if (error) throw error;
+
       closeModal('mssrp-tool-modal');
       toast(`Larm #${call.id} togs bort.`);
       await refreshDispatchBoard();
