@@ -2310,33 +2310,40 @@ function openDispatchCall(index) {
   <div class="cad-call-actions">${assigned.length ? assigned.map(u => `<button class="mssrp-secondary" type="button" data-unassign-unit="${escapeHtml(u.id)}">Ta bort ${escapeHtml(u.callsign)}</button>`).join('') : '<span class="mssrp-status-row">Inga enheter är tilldelade.</span>'}</div>`;
   $('#cad-delete-call')?.addEventListener('click', async () => {
     if (!window.confirm(`Ta bort larm #${call.id}? Detta går inte att ångra.`)) return;
+
     try {
-      // Soft-delete first. This works even when Supabase RLS blocks DELETE.
-      // The dispatch board only shows new/assigned/active calls, so deleted calls disappear immediately.
-      let { error } = await supabase
+      // Frigör alla enheter som är kopplade till larmet
+      const { error: unitError } = await supabase
+        .from('dispatch_units')
+        .update({
+          assigned_call_id: null,
+          status: 'available'
+        })
+        .eq('assigned_call_id', call.id);
+
+      if (unitError) throw unitError;
+
+      // Markera larmet som borttaget. Dispatch-listan visar bara
+      // new, assigned och active, så larmet försvinner direkt.
+      const { error: callError } = await supabase
         .from('dispatch_calls')
         .update({ status: 'deleted' })
         .eq('id', call.id);
 
-      if (error) {
-        console.error('Soft-delete dispatch call failed:', error);
-        // Fallback to a real DELETE if the database allows it.
-        const result = await supabase
-          .from('dispatch_calls')
-          .delete()
-          .eq('id', call.id);
-        error = result.error;
-      }
+      if (callError) throw callError;
 
-      if (error) throw error;
+      // Ta bort det direkt från cache/UI så användaren slipper vänta på polling.
+      dispatchCallsCache = (dispatchCallsCache || []).filter(c => c.id !== call.id);
 
       closeModal('mssrp-tool-modal');
+      renderDispatchCalls(dispatchCallsCache);
       toast(`Larm #${call.id} togs bort.`);
+
       await refreshDispatchBoard();
       await loadAdminStats();
     } catch (e) {
-      console.error('Delete dispatch call failed:', e);
-      toast(e.message || 'Kunde inte ta bort larmet. Kontrollera Supabase RLS.');
+      console.error('Remove dispatch call failed:', e);
+      toast(e.message || 'Kunde inte ta bort larmet.');
     }
   });
 
