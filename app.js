@@ -87,6 +87,22 @@ const state = {
 
 
 /* ============================================================
+   ROBUST MSSRP ID GENERATOR
+   ============================================================ */
+
+function mssrpId() {
+  try {
+    if (globalThis.crypto?.randomUUID) {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch (_) {}
+
+  return 'mssrp-' + Date.now().toString(36) + '-' +
+    Math.random().toString(36).slice(2, 10);
+}
+
+
+/* ============================================================
    SYMBOL DEFINITIONS
    ============================================================ */
 
@@ -304,7 +320,7 @@ function createDefaultFloor(data = {}, index = 0) {
 
     id:
       data.id ||
-      crypto.randomUUID(),
+      mssrpId(),
 
     name:
       data.name ||
@@ -445,7 +461,7 @@ function syncCurrentFloorToOperation() {
   floor.id =
     floor.id ||
     state.currentFloorId ||
-    crypto.randomUUID();
+    mssrpId();
 
   state.currentFloorId =
     floor.id;
@@ -901,7 +917,7 @@ function createDefaultOperation(data = {}) {
 
     id:
       data.id ||
-      crypto.randomUUID(),
+      mssrpId(),
 
     name:
       data.name ||
@@ -2634,7 +2650,7 @@ async function openCrimeWeapons() {
       if(error) return toast(error.message || 'Kunde inte lägga till vapnet.');
       weapons.unshift(data);
     } else {
-      row.id = crypto.randomUUID(); row.created_at = new Date().toISOString(); weapons.unshift(row);
+      row.id = mssrpId(); row.created_at = new Date().toISOString(); weapons.unshift(row);
       localStorage.setItem('mssrp_crime_weapons', JSON.stringify(weapons));
     }
     event.target.reset(); $('#crime-stock').value='1'; render(); toast('Vapnet lades till i katalogen.');
@@ -3291,62 +3307,106 @@ function openOperation(id) {
 }
 
 
-function openEditor() {
+async function openEditor() {
 
-  hide(
-    $('#start-screen')
-  );
+  const appScreen =
+    $('#app-screen');
 
-  show(
-    $('#app-screen')
-  );
+  const startScreen =
+    $('#start-screen');
+
+  if (!state.currentOp) {
+    toast('Ingen operation är vald.');
+    return;
+  }
+
+  hide(startScreen);
+  show(appScreen);
+
+  // Some CSS versions use either .hidden or .active for screen visibility.
+  // Make sure the editor is actually visible before measuring the map area.
+  appScreen?.classList.add('active');
+  appScreen?.classList.remove('portal-page-hidden');
 
   updateHeader();
 
-  normalizeOperationFloors(
-    state.currentOp
-  );
+  normalizeOperationFloors(state.currentOp);
 
   state.currentFloorId =
     state.currentOp.activeFloorId ||
     state.currentOp.floors[0]?.id ||
     null;
 
-  activateFloor(
-    state.currentFloorId,
-    {
-      silent: true
-    }
-  );
+  activateFloor(state.currentFloorId, { silent: true });
 
-  initStage();
+  try {
+    await ensureKonvaLoaded();
+    initStage();
+  } catch (error) {
+    console.error('Tactical planner startup failed:', error);
+
+    const container = $('#konva-container');
+    if (container) {
+      container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;padding:24px;text-align:center;color:#dbeafe;background:#0b1f3a;">
+          <div>
+            <strong style="display:block;font-size:18px;margin-bottom:8px;">Taktiska planeringen kunde inte starta kartmotorn.</strong>
+            <span style="display:block;color:#9fb3c8;">Försök ladda om sidan. Om problemet kvarstår, öppna F12 → Console och skicka felet.</span>
+          </div>
+        </div>`;
+    }
+    toast('Taktisk planering startade utan kartmotorn.');
+    return;
+  }
 
   ensureFloorControls();
   renderFloorControls();
-
   renderOperationObjects();
-
   renderGroups();
-
   renderTimeline();
-
   updateNotes();
-
   resetHistory();
 
   if (state.currentOp?.map) {
-
-    loadMapFromData(
-      state.currentOp.map
-    );
-
+    loadMapFromData(state.currentOp.map);
   } else {
-
     clearMap();
-
   }
 
+  // Force one layout pass after the editor becomes visible so Konva gets
+  // the real container size instead of a hidden/zero-sized measurement.
+  requestAnimationFrame(() => {
+    resizeStage();
+    renderOperationObjects();
+  });
 }
+
+
+async function ensureKonvaLoaded() {
+  if (globalThis.Konva?.Stage) return;
+
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-mssrp-konva-loader]');
+    if (existing) {
+      existing.addEventListener('load', resolve, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Konva kunde inte laddas.')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/konva@9.3.6/konva.min.js';
+    script.async = true;
+    script.dataset.mssrpKonvaLoader = '1';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Konva kunde inte laddas från CDN.'));
+    document.head.appendChild(script);
+  });
+
+  if (!globalThis.Konva?.Stage) {
+    throw new Error('Konva laddades men Stage saknas.');
+  }
+}
+
 
 
 /* ============================================================
@@ -3419,6 +3479,10 @@ function updateHeader() {
    ============================================================ */
 
 function initStage() {
+
+  if (!globalThis.Konva?.Stage) {
+    throw new Error('Konva är inte tillgängligt.');
+  }
 
   const container =
     $('#konva-container');
@@ -3939,7 +4003,7 @@ function createSymbolAt(
   const object = {
 
     id:
-      crypto.randomUUID(),
+      mssrpId(),
 
     type:
       'symbol',
@@ -4193,7 +4257,7 @@ function createTextAt(
   const object = {
 
     id:
-      crypto.randomUUID(),
+      mssrpId(),
 
     type:
       'text',
@@ -4796,7 +4860,7 @@ function finishDrawing() {
   const object = {
 
     id:
-      crypto.randomUUID(),
+      mssrpId(),
 
     type:
       state.currentTool,
@@ -6868,7 +6932,7 @@ function addGroup() {
   state.currentOp.groups.push({
 
     id:
-      crypto.randomUUID(),
+      mssrpId(),
 
     name:
       name.trim(),
@@ -7048,7 +7112,7 @@ function addTimelineEvent() {
   state.currentOp.timeline.push({
 
     id:
-      crypto.randomUUID(),
+      mssrpId(),
 
     time:
       time.trim(),
@@ -7574,7 +7638,7 @@ async function importPlan(
       );
 
     imported.id =
-      crypto.randomUUID();
+      mssrpId();
 
     imported.createdAt =
       new Date().toISOString();
