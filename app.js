@@ -2260,58 +2260,113 @@ async function loadBankPage() {
     isLoginMode = true; updateAuthModal(); showModal('auth-modal');
     return;
   }
+
   try {
-    const data = await mssrpApi('/bank/account');
-    $('#bank-user-name') && ($('#bank-user-name').textContent = data.profile?.display_name || currentUser.email || 'Användare');
-    $('#bank-role-line') && ($('#bank-role-line').textContent = `${data.payroll?.role_name || 'Ingen löneklass'} · MSSRP BANK`);
-    $('#bank-balance') && ($('#bank-balance').textContent = Number(data.account?.balance || 0).toLocaleString('sv-SE', {minimumFractionDigits:2, maximumFractionDigits:2}));
-    $('#bank-payroll-role') && ($('#bank-payroll-role').textContent = data.payroll?.role_name || 'Ingen löneklass');
-    $('#bank-paycheck') && ($('#bank-paycheck').textContent = `${Number(data.payroll?.monthly_salary || 0).toLocaleString('sv-SE')} kr`);
-    $('#bank-account-number') && ($('#bank-account-number').textContent = data.account?.account_number || '—');
-    $('#bank-next-payday') && ($('#bank-next-payday').textContent = data.payroll?.next_payday ? new Date(data.payroll.next_payday).toLocaleDateString('sv-SE') : '—');
+    // Use the Supabase RPCs directly so the bank keeps working even when
+    // the optional /api backend is not deployed or its route is stale.
+    const [accountRes, payrollRes, transactionsRes] = await Promise.all([
+      supabase.rpc('mssrp_get_bank_account'),
+      supabase.rpc('mssrp_get_my_payroll'),
+      supabase.rpc('mssrp_get_bank_transactions', { p_limit: 40 })
+    ]);
+    if (accountRes.error) throw accountRes.error;
+    if (payrollRes.error) throw payrollRes.error;
+    if (transactionsRes.error) throw transactionsRes.error;
+
+    const account = accountRes.data || {};
+    const payroll = payrollRes.data || {};
+    const profileName = currentUser.user_metadata?.display_name || currentUser.user_metadata?.full_name || currentUser.email || 'Användare';
+    const roleName = payroll.class_name || 'Ingen löneklass';
+
+    $('#bank-user-name') && ($('#bank-user-name').textContent = profileName);
+    $('#bank-role-line') && ($('#bank-role-line').textContent = `${roleName} · Swedbank RP`);
+    $('#bank-balance') && ($('#bank-balance').textContent = Number(account.balance || 0).toLocaleString('sv-SE', {minimumFractionDigits:2, maximumFractionDigits:2}));
+    $('#bank-payroll-role') && ($('#bank-payroll-role').textContent = roleName);
+    $('#bank-paycheck') && ($('#bank-paycheck').textContent = `${Number(payroll.daily_pay || 0).toLocaleString('sv-SE')} kr`);
+    $('#bank-account-number') && ($('#bank-account-number').textContent = account.account_number || '—');
+    $('#bank-next-payday') && ($('#bank-next-payday').textContent = payroll.next_pay_at ? new Date(payroll.next_pay_at).toLocaleString('sv-SE') : 'Tillgänglig');
+
     const list = $('#bank-transactions-list');
-    if (list) list.innerHTML = (data.transactions || []).length ? data.transactions.map(t => {
+    const transactions = Array.isArray(transactionsRes.data) ? transactionsRes.data : [];
+    if (list) list.innerHTML = transactions.length ? transactions.map(t => {
       const amount = Number(t.amount || 0); const positive = amount >= 0;
       return `<div class="mssrp-bank-transaction"><div class="mssrp-bank-transaction-icon">${positive ? '↓' : '↑'}</div><div><strong>${escapeHtml(t.description || 'Bankhändelse')}</strong><small>${new Date(t.created_at).toLocaleString('sv-SE')}</small></div><b class="${positive ? 'positive' : 'negative'}">${positive ? '+' : ''}${amount.toLocaleString('sv-SE')} kr</b></div>`;
     }).join('') : '<div class="mssrp-bank-empty">Inga transaktioner ännu.</div>';
+
+    addMssrpSwishButton();
+    if (typeof mssrpPhoneRefreshBank === 'function') mssrpPhoneRefreshBank(account);
   } catch (error) {
     console.error('Bank load failed:', error);
-    toast(error.message || 'Kunde inte läsa banken.');
-    const list = $('#bank-transactions-list'); if (list) list.innerHTML = '<div class="mssrp-bank-empty">Banktjänsten kunde inte laddas.</div>';
+    toast(error.message || 'Kunde inte läsa banken. Kör den uppdaterade Supabase SQL-filen om RPC-funktionen saknas.');
+    const list = $('#bank-transactions-list'); if (list) list.innerHTML = `<div class="mssrp-bank-empty">Banktjänsten kunde inte laddas.<br><small>${escapeHtml(error.message || '')}</small></div>`;
   }
 }
 
 async function loadAdminPayroll() {
   if (!hasPermission('admin')) return;
   try {
-    const data = await mssrpApi('/admin/payroll');
+    // Read/write payroll through the database RPCs. The previous screen used
+    // /api/admin/payroll, which caused the visible "Kunde inte läsa payroll-data"
+    // error when that optional backend route was unavailable.
+    const { data, error } = await supabase.rpc('mssrp_admin_payroll_users');
+    if (error) throw error;
+
+    const rows = Array.isArray(data) ? data : [];
+    const roles = rows[0]?.classes || [
+      {id:1,name:'Lön 1',daily_pay:36000},
+      {id:2,name:'Lön 2',daily_pay:42000},
+      {id:3,name:'Lön 3',daily_pay:50000},
+      {id:4,name:'Lön 4',daily_pay:60000},
+      {id:5,name:'Lön 5',daily_pay:75000},
+      {id:6,name:'Lön 6',daily_pay:90000}
+    ];
+
     const rolesBox = $('#admin-payroll-roles');
-    if (rolesBox) rolesBox.innerHTML = (data.roles || []).map(r => `<div class="mssrp-payroll-role"><div><strong>${escapeHtml(r.name)}</strong><small>${escapeHtml(r.description || '')}</small></div><div class="mssrp-payroll-edit"><input type="number" min="0" step="100" data-payroll-role="${r.id}" value="${Number(r.monthly_salary || 0)}"><span>kr/dag</span><button class="mssrp-secondary" type="button" data-save-payroll-role="${r.id}">Spara</button></div></div>`).join('');
+    if (rolesBox) rolesBox.innerHTML = roles.map(r => `<div class="mssrp-payroll-role"><div><strong>${escapeHtml(r.name)}</strong><small>Daglig RP-lön</small></div><div class="mssrp-payroll-edit"><input type="number" min="0" step="100" data-payroll-role="${r.id}" value="${Number(r.daily_pay || 0)}"><span>kr/dag</span><button class="mssrp-secondary" type="button" data-save-payroll-role="${r.id}">Spara</button></div></div>`).join('');
+
     const search = ($('#admin-payroll-search')?.value || '').toLowerCase().trim();
-    const users = (data.users || []).filter(u => `${u.display_name || ''} ${u.id}`.toLowerCase().includes(search));
+    const users = rows.filter(u => `${u.display_name || ''} ${u.email || ''} ${u.user_id || ''}`.toLowerCase().includes(search));
     const tbody = $('#admin-payroll-users');
     if (tbody) tbody.innerHTML = users.length ? users.map(u => {
-      const opts = (data.roles || []).map(r => `<option value="${r.id}" ${String(r.id) === String(u.payroll_role_id) ? 'selected' : ''}>${escapeHtml(r.name)} · ${Number(r.monthly_salary).toLocaleString('sv-SE')} kr</option>`).join('');
-      return `<tr><td><strong>${escapeHtml(u.display_name || 'Okänd')}</strong><small>${escapeHtml(u.id)}</small></td><td><select class="mssrp-payroll-select" data-payroll-user="${u.id}">${opts}</select></td><td>${Number(u.monthly_salary || 0).toLocaleString('sv-SE')} kr</td><td><button class="mssrp-secondary" type="button" data-save-payroll-user="${u.id}">Tilldela</button> <button class="mssrp-primary" type="button" data-pay-user="${u.id}">Betala idag</button></td></tr>`;
+      const opts = roles.map(r => `<option value="${r.id}" ${String(r.id) === String(u.class_id) ? 'selected' : ''}>${escapeHtml(r.name)} · ${Number(r.daily_pay || 0).toLocaleString('sv-SE')} kr</option>`).join('');
+      return `<tr><td><strong>${escapeHtml(u.display_name || 'Okänd')}</strong><small>${escapeHtml(u.email || u.user_id || '')}</small></td><td><select class="mssrp-payroll-select" data-payroll-user="${u.user_id}">${opts}</select></td><td>${Number(u.daily_pay || 0).toLocaleString('sv-SE')} kr</td><td><button class="mssrp-secondary" type="button" data-save-payroll-user="${u.user_id}">Tilldela</button> <button class="mssrp-primary" type="button" data-pay-user="${u.user_id}">Betala idag</button></td></tr>`;
     }).join('') : '<tr><td colspan="4">Inga användare hittades.</td></tr>';
+
     $$('#admin-payroll-roles [data-save-payroll-role]').forEach(btn => btn.addEventListener('click', async () => {
       const input = $(`[data-payroll-role="${CSS.escape(btn.dataset.savePayrollRole)}"]`); const salary = Number(input?.value);
       if (!Number.isFinite(salary) || salary < 0) return toast('Ogiltig lön.');
-      try { await mssrpApi(`/admin/payroll/roles/${btn.dataset.savePayrollRole}`, {method:'PUT', body:JSON.stringify({monthly_salary:salary})}); toast('Lönen uppdaterades.'); await loadAdminPayroll(); }
-      catch(e){ toast(e.message); }
+      try {
+        const { error } = await supabase.rpc('mssrp_admin_update_payroll_class', { p_class_id: Number(btn.dataset.savePayrollRole), p_daily_pay: Math.round(salary) });
+        if (error) throw error;
+        toast('Lönen uppdaterades.');
+        await loadAdminPayroll();
+      } catch(e){ toast(e.message || 'Kunde inte uppdatera lönen.'); }
     }));
+
     $$('#admin-payroll-users [data-save-payroll-user]').forEach(btn => btn.addEventListener('click', async () => {
       const select = $(`[data-payroll-user="${CSS.escape(btn.dataset.savePayrollUser)}"]`); if (!select?.value) return;
-      try { await mssrpApi('/admin/payroll/assign', {method:'POST', body:JSON.stringify({user_id:btn.dataset.savePayrollUser, payroll_role_id:select.value})}); toast('Löneklass tilldelad.'); await loadAdminPayroll(); }
-      catch(e){ toast(e.message); }
+      try {
+        const { error } = await supabase.rpc('mssrp_admin_set_payroll', { p_user_id: btn.dataset.savePayrollUser, p_class_id: Number(select.value) });
+        if (error) throw error;
+        toast('Löneklass tilldelad.');
+        await loadAdminPayroll();
+      } catch(e){ toast(e.message || 'Kunde inte tilldela löneklass.'); }
     }));
+
     $$('#admin-payroll-users [data-pay-user]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!confirm('Betala dagens lön till användarens MSSRP-bankkonto?')) return;
-      try { await mssrpApi('/admin/payroll/pay', {method:'POST', body:JSON.stringify({user_id:btn.dataset.payUser})}); toast('Dagens lön betalades ut.'); await loadAdminPayroll(); }
-      catch(e){ toast(e.message); }
+      if (!confirm('Betala dagens lön till användarens Swedbank RP-konto?')) return;
+      try {
+        const { error } = await supabase.rpc('mssrp_admin_pay_user', { p_user_id: btn.dataset.payUser });
+        if (error) throw error;
+        toast('Dagens lön betalades ut.');
+        await loadAdminPayroll();
+      } catch(e){ toast(e.message || 'Kunde inte betala ut lön.'); }
     }));
   } catch (error) {
-    console.error('Payroll load failed:', error); const box=$('#admin-payroll-users'); if(box) box.innerHTML='<tr><td colspan="4">Kunde inte läsa payroll-data.</td></tr>'; toast(error.message || 'Kunde inte läsa löner.');
+    console.error('Payroll load failed:', error);
+    const box=$('#admin-payroll-users');
+    if(box) box.innerHTML=`<tr><td colspan="4">Kunde inte läsa payroll-data.<br><small>${escapeHtml(error.message || 'Kontrollera Supabase SQL och adminbehörighet.')}</small></td></tr>`;
+    toast(error.message || 'Kunde inte läsa löner.');
   }
 }
 
@@ -8170,6 +8225,7 @@ async function init() {
   await checkAuth();
   await loadAccessProfile();
   initMssrpSocialEconomy();
+  initMssrpPhone();
   if (window.location.hash === '#bank' && currentUser) await loadBankPage();
   await checkPasswordRecovery();
 
@@ -8494,8 +8550,13 @@ async function renderMssrpBlocket(content) {
 }
 
 function addMssrpSwishButton() {
+  const existing = $('#mssrp-swish-open');
+  if (existing) {
+    existing.onclick = openMssrpSwish;
+    return;
+  }
   const hero = document.querySelector('.mssrp-bank-hero');
-  if (!hero || $('#mssrp-swish-open')) return;
+  if (!hero) return;
 
   const button = document.createElement('button');
   button.id = 'mssrp-swish-open';
@@ -8514,22 +8575,40 @@ function openMssrpSwish() {
     return;
   }
 
-  const body = $('#mssrp-tool-body');
+  const phoneBody = document.querySelector('#mssrp-phone-app-body');
+  const renderInto = phoneBody && document.body.classList.contains('mssrp-phone-app-open');
+  const body = renderInto ? phoneBody : $('#mssrp-tool-body');
   if (!body) return;
 
-  $('#mssrp-tool-title').textContent = 'Swish';
-  $('#mssrp-tool-eyebrow').textContent = 'MSSRP · BETALNINGAR';
-  body.innerHTML = `
+  const html = `
     <div class="mssrp-swish-hero">
       <div class="mssrp-swish-logo">S</div>
-      <div><strong>Swish</strong><small>Skicka RP-pengar till en annan MSSRP-användare.</small></div>
+      <div><strong>Swish</strong><small>Skicka pengar direkt till ett RP-telefonnummer.</small></div>
     </div>
-    <form id="mssrp-swish-form" class="mssrp-tool-form">
-      <label>Mottagare<input id="mssrp-swish-recipient" required placeholder="E-post, RP-namn eller användar-ID"></label>
+    <form id="mssrp-swish-form" class="mssrp-tool-form mssrp-swish-form">
+      <label>Mottagarens telefonnummer<input id="mssrp-swish-recipient" required inputmode="tel" placeholder="070-123 45 67"></label>
       <label>Belopp<input id="mssrp-swish-amount" type="number" min="1" max="100000000" step="1" required placeholder="5000"></label>
       <label>Meddelande<input id="mssrp-swish-message" maxlength="140" placeholder="T.ex. Hyra"></label>
-      <button class="mssrp-primary" type="submit">Skicka Swish</button>
+      <div id="mssrp-swish-recipient-preview" class="mssrp-phone-result"></div>
+      <button class="mssrp-primary" type="submit">Swisha</button>
     </form>`;
+  body.innerHTML = html;
+
+  const recipientInput = $('#mssrp-swish-recipient');
+  let lookupTimer = null;
+  recipientInput?.addEventListener('input', () => {
+    clearTimeout(lookupTimer);
+    const value = recipientInput.value.trim();
+    if (!value) { $('#mssrp-swish-recipient-preview').textContent = ''; return; }
+    lookupTimer = setTimeout(async () => {
+      try {
+        const { data, error } = await supabase.rpc('mssrp_lookup_phone', { p_phone: value });
+        if (error) throw error;
+        const preview = $('#mssrp-swish-recipient-preview');
+        if (preview) preview.textContent = data?.display_name ? `${data.display_name} · ${data.phone_number}` : 'Numret hittades inte';
+      } catch {}
+    }, 250);
+  });
 
   $('#mssrp-swish-form')?.addEventListener('submit', async event => {
     event.preventDefault();
@@ -8537,21 +8616,27 @@ function openMssrpSwish() {
     const amount = Number($('#mssrp-swish-amount').value);
     const message = $('#mssrp-swish-message').value.trim();
     if (!recipient || !Number.isFinite(amount) || amount <= 0) {
-      toast('Ange mottagare och ett giltigt belopp.');
+      toast('Ange telefonnummer och ett giltigt belopp.');
       return;
     }
 
     const button = event.target.querySelector('button[type="submit"]');
     if (button) button.disabled = true;
     try {
-      const result = await mssrpSocialRpc('mssrp_swish', {
+      const { data: result, error } = await supabase.rpc('mssrp_swish', {
         p_recipient: recipient,
         p_amount: Math.round(amount),
         p_message: message || 'Swish-betalning'
       });
+      if (error) throw error;
       toast(`Swish skickad: ${mssrpSocialFormatSEK(amount)}.`);
       if (result?.recipient_name) toast(`Mottagare: ${result.recipient_name}`);
-      if (typeof loadBankPage === 'function') await loadBankPage();
+      if (renderInto) {
+        await mssrpPhoneRefresh();
+        renderMssrpPhoneApp('home');
+      } else if (typeof loadBankPage === 'function') {
+        await loadBankPage();
+      }
     } catch (error) {
       toast(error.message || 'Swish-betalningen kunde inte genomföras.');
     } finally {
@@ -8559,7 +8644,215 @@ function openMssrpSwish() {
     }
   });
 
-  showModal('mssrp-tool-modal');
+  if (!renderInto) showModal('mssrp-tool-modal');
+}
+
+function initMssrpSocialEconomy() {
+  ensureMssrpSocialUI();
+  addMssrpSwishButton();
+}
+
+
+/* ============================================================
+   MSSRP RP PHONE · SMS · CALLS · PHONE SWISH
+   ============================================================ */
+
+let mssrpPhonePollTimer = null;
+let mssrpPhoneData = { phone_number: '', sms: [], calls: [] };
+let mssrpPhoneActiveApp = 'home';
+
+async function mssrpPhoneRefresh() {
+  if (!currentUser) return;
+  try {
+    const { data, error } = await supabase.rpc('mssrp_get_phone_state');
+    if (error) throw error;
+    mssrpPhoneData = data || { phone_number: '', sms: [], calls: [] };
+    const numberEl = $('#mssrp-phone-number');
+    if (numberEl) numberEl.textContent = mssrpPhoneData.phone_number || 'Tilldelar nummer…';
+    renderMssrpPhoneHomeBadges();
+    renderMssrpIncomingCall();
+    if (mssrpPhoneActiveApp === 'call') renderMssrpPhoneApp('call', true);
+    if (mssrpPhoneActiveApp === 'bank') mssrpPhoneRefreshBank();
+  } catch (error) {
+    console.error('Phone refresh failed:', error);
+    const status = $('#mssrp-phone-status');
+    if (status) status.textContent = 'Telefonen kunde inte ansluta till MSSRP.';
+  }
+}
+
+function renderMssrpPhoneHomeBadges() {
+  const unread = (mssrpPhoneData.sms || []).filter(x => x.recipient_id === currentUser?.id && !x.read_at).length;
+  const smsBadge = $('#mssrp-phone-sms-badge');
+  if (smsBadge) { smsBadge.textContent = unread > 99 ? '99+' : String(unread); smsBadge.classList.toggle('hidden', unread === 0); }
+  const calls = (mssrpPhoneData.calls || []).filter(x => x.recipient_id === currentUser?.id && x.status === 'ringing').length;
+  const callBadge = $('#mssrp-phone-call-badge');
+  if (callBadge) { callBadge.textContent = calls > 9 ? '9+' : String(calls); callBadge.classList.toggle('hidden', calls === 0); }
+}
+
+function mssrpPhoneFormatNumber(value) {
+  const raw = String(value || '').replace(/\D/g, '');
+  if (!raw) return '';
+  if (raw.startsWith('46')) return '0' + raw.slice(2);
+  return raw;
+}
+
+function mssrpPhoneFormatDisplay(value) {
+  const n = mssrpPhoneFormatNumber(value);
+  if (n.length === 10 && n.startsWith('0')) return `${n.slice(0,3)}-${n.slice(3,6)} ${n.slice(6,8)} ${n.slice(8)}`;
+  return value || 'Okänt nummer';
+}
+
+function renderMssrpIncomingCall() {
+  const call = (mssrpPhoneData.calls || []).find(x => x.recipient_id === currentUser?.id && x.status === 'ringing');
+  const box = $('#mssrp-phone-incoming');
+  if (!box) return;
+  if (!call) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const name = call.caller_name || mssrpPhoneFormatDisplay(call.caller_phone);
+  box.innerHTML = `<div class="mssrp-incoming-call-icon">☎</div><div><span>INKOMMANDE SAMTAL</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(call.caller_phone))}</small></div><div class="mssrp-incoming-actions"><button type="button" class="mssrp-phone-danger" data-phone-reject="${call.id}">Avvisa</button><button type="button" class="mssrp-phone-answer" data-phone-answer="${call.id}">Svara</button></div>`;
+}
+
+function renderMssrpPhoneHome() {
+  const body = $('#mssrp-phone-app-body');
+  if (!body) return;
+  document.body.classList.remove('mssrp-phone-app-open');
+  mssrpPhoneActiveApp = 'home';
+  $('#mssrp-phone-app-title') && ($('#mssrp-phone-app-title').textContent = 'Hem');
+  $('#mssrp-phone-app-subtitle') && ($('#mssrp-phone-app-subtitle').textContent = mssrpPhoneData.phone_number ? mssrpPhoneFormatDisplay(mssrpPhoneData.phone_number) : 'MSSRP');
+  body.innerHTML = `
+    <div class="mssrp-iphone-status"><span>9:41</span><span>▮▮▮ ◉</span></div>
+    <div class="mssrp-iphone-wallpaper">
+      <div class="mssrp-phone-date">MSSRP · ${new Date().toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long'})}</div>
+      <div class="mssrp-phone-app-grid">
+        <button class="mssrp-phone-app" data-phone-app="call"><span class="phone-app-icon phone-green">☎</span><strong>Telefon</strong><b id="mssrp-phone-call-badge" class="mssrp-phone-badge hidden">0</b></button>
+        <button class="mssrp-phone-app" data-phone-app="sms"><span class="phone-app-icon phone-green">▰</span><strong>Meddelanden</strong><b id="mssrp-phone-sms-badge" class="mssrp-phone-badge hidden">0</b></button>
+        <button class="mssrp-phone-app" data-phone-app="swish"><span class="phone-app-icon phone-blue">S</span><strong>Swish</strong></button>
+        <button class="mssrp-phone-app" data-phone-app="bank"><span class="phone-app-icon phone-orange">$</span><strong>Swedbank</strong></button>
+        <button class="mssrp-phone-app" data-phone-app="contacts"><span class="phone-app-icon phone-gray">●●</span><strong>Kontakter</strong></button>
+      </div>
+      <div class="mssrp-phone-dock"><button class="mssrp-phone-dock-app" data-phone-app="call">☎</button><button class="mssrp-phone-dock-app" data-phone-app="sms">▰</button><button class="mssrp-phone-dock-app" data-phone-app="swish">S</button><button class="mssrp-phone-dock-app" data-phone-app="bank">$</button></div>
+    </div>`;
+  renderMssrpPhoneHomeBadges();
+}
+
+function renderMssrpPhoneApp(app, silent = false) {
+  const body = $('#mssrp-phone-app-body');
+  if (!body) return;
+  mssrpPhoneActiveApp = app;
+  document.body.classList.add('mssrp-phone-app-open');
+  const title = $('#mssrp-phone-app-title');
+  const subtitle = $('#mssrp-phone-app-subtitle');
+  const home = $('#mssrp-phone-home-button');
+  if (home) home.onclick = () => renderMssrpPhoneHome();
+  if (title) title.textContent = ({call:'Telefon',sms:'Meddelanden',swish:'Swish',bank:'Swedbank',contacts:'Kontakter'})[app] || 'Telefon';
+  if (subtitle) subtitle.textContent = mssrpPhoneData.phone_number ? mssrpPhoneFormatDisplay(mssrpPhoneData.phone_number) : 'MSSRP';
+
+  if (app === 'swish') { openMssrpSwish(); return; }
+  if (app === 'bank') {
+    body.innerHTML = `<div class="mssrp-phone-app-inner"><div class="mssrp-phone-bank-logo"><span>✦</span><strong>Swedbank</strong></div><div class="mssrp-phone-bank-balance"><small>SALDO</small><strong id="mssrp-phone-bank-balance">Laddar…</strong><span>SEK</span></div><button class="mssrp-primary" id="mssrp-phone-bank-refresh">Uppdatera saldo</button><div id="mssrp-phone-bank-transactions" class="mssrp-phone-mini-list"></div></div>`;
+    mssrpPhoneRefreshBank();
+    $('#mssrp-phone-bank-refresh')?.addEventListener('click', mssrpPhoneRefreshBank);
+    return;
+  }
+  if (app === 'call') renderMssrpPhoneCallApp();
+  else if (app === 'sms') renderMssrpPhoneSmsApp();
+  else if (app === 'contacts') renderMssrpPhoneContactsApp();
+}
+
+async function mssrpPhoneRefreshBank(account = null) {
+  try {
+    if (!account) {
+      const { data, error } = await supabase.rpc('mssrp_get_bank_account');
+      if (error) throw error;
+      account = data;
+    }
+    const balance = $('#mssrp-phone-bank-balance');
+    if (balance) balance.textContent = Number(account?.balance || 0).toLocaleString('sv-SE',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const { data: tx, error } = await supabase.rpc('mssrp_get_bank_transactions',{p_limit:8});
+    if (error) throw error;
+    const box = $('#mssrp-phone-bank-transactions');
+    if (box) box.innerHTML = (tx || []).map(t => `<div><span>${escapeHtml(t.description || 'Bankhändelse')}</span><b class="${Number(t.amount)>=0?'positive':'negative'}">${Number(t.amount)>=0?'+':''}${Number(t.amount).toLocaleString('sv-SE')} kr</b></div>`).join('') || '<small>Inga transaktioner.</small>';
+  } catch (error) {
+    const balance = $('#mssrp-phone-bank-balance'); if (balance) balance.textContent = 'Fel';
+  }
+}
+
+function renderMssrpPhoneCallApp() {
+  const body = $('#mssrp-phone-app-body');
+  if (!body) return;
+  const allCalls = (mssrpPhoneData.calls || []).filter(c => c.caller_id === currentUser?.id || c.recipient_id === currentUser?.id);
+  const active = allCalls.find(c => c.status === 'accepted' && !c.ended_at);
+  const calls = allCalls.filter(c => c.id !== active?.id).slice(0,12);
+
+  if (active) {
+    const outgoing = active.caller_id === currentUser?.id;
+    const number = outgoing ? active.recipient_phone : active.caller_phone;
+    const name = outgoing ? active.recipient_name : active.caller_name;
+    const started = active.answered_at ? new Date(active.answered_at) : new Date();
+    const elapsed = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
+    const mm = String(Math.floor(elapsed / 60)).padStart(2,'0');
+    const ss = String(elapsed % 60).padStart(2,'0');
+    body.innerHTML = `<div class="mssrp-phone-app-inner mssrp-active-call"><div class="mssrp-active-call-avatar">${escapeHtml((name || '?').slice(0,1).toUpperCase())}</div><strong>${escapeHtml(name || mssrpPhoneFormatDisplay(number))}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(number))}</small><div class="mssrp-call-timer">${mm}:${ss}</div><span class="mssrp-call-live">PÅGÅENDE SAMTAL</span><button class="mssrp-phone-danger mssrp-end-call" data-phone-end="${active.id}" type="button">Avsluta samtal</button></div>`;
+    return;
+  }
+
+  body.innerHTML = `<div class="mssrp-phone-app-inner"><div class="mssrp-phone-number-card"><small>MITT NUMMER</small><strong>${escapeHtml(mssrpPhoneFormatDisplay(mssrpPhoneData.phone_number))}</strong></div><form id="mssrp-phone-call-form" class="mssrp-phone-compose"><label>Ring nummer<input id="mssrp-call-number" required inputmode="tel" placeholder="070-123 45 67"></label><button class="mssrp-phone-answer" type="submit">Ring</button></form><div class="mssrp-phone-section-title">Senaste samtal</div><div class="mssrp-phone-mini-list">${calls.length ? calls.map(c => { const outgoing=c.caller_id===currentUser?.id; const number=outgoing?c.recipient_phone:c.caller_phone; const name=outgoing?c.recipient_name:c.caller_name; const label=c.status==='accepted'?'Samtal':c.status==='missed'?'Missat':c.status==='rejected'?'Avvisat':'Ringer'; return `<div><span><strong>${escapeHtml(name || mssrpPhoneFormatDisplay(number))}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(number))}</small></span><b>${label}</b></div>`; }).join('') : '<small>Inga samtal ännu.</small>'}</div></div>`;
+  $('#mssrp-phone-call-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const number=$('#mssrp-call-number')?.value.trim(); if(!number) return;
+    try { const {data,error}=await supabase.rpc('mssrp_start_call',{p_recipient_phone:number}); if(error) throw error; toast(`Ringer ${mssrpPhoneFormatDisplay(data?.recipient_phone || number)}…`); await mssrpPhoneRefresh(); }
+    catch(error){ toast(error.message || 'Samtalet kunde inte startas.'); }
+  });
+}
+
+function renderMssrpPhoneSmsApp() {
+  const body = $('#mssrp-phone-app-body'); if (!body) return;
+  const messages=(mssrpPhoneData.sms || []).slice(0,60);
+  body.innerHTML=`<div class="mssrp-phone-app-inner"><div class="mssrp-phone-section-title">Meddelanden</div><div class="mssrp-sms-list">${messages.length ? messages.map(m=>{const outgoing=m.sender_id===currentUser?.id; const number=outgoing?m.recipient_phone:m.sender_phone; const name=outgoing?m.recipient_name:m.sender_name; return `<article class="mssrp-sms-row ${outgoing?'outgoing':''}"><div><strong>${escapeHtml(name || mssrpPhoneFormatDisplay(number))}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(number))} · ${new Date(m.created_at).toLocaleString('sv-SE')}</small><p>${escapeHtml(m.body)}</p></div></article>`;}).join(''):'<div class="mssrp-phone-empty">Inga SMS ännu.</div>'}</div><form id="mssrp-sms-form" class="mssrp-phone-compose"><label>Telefonnummer<input id="mssrp-sms-number" required inputmode="tel" placeholder="070-123 45 67"></label><label>Meddelande<textarea id="mssrp-sms-body" required maxlength="1000" placeholder="Skriv ett meddelande…"></textarea></label><button class="mssrp-primary" type="submit">Skicka SMS</button></form></div>`;
+  $('#mssrp-sms-form')?.addEventListener('submit',async e=>{e.preventDefault();const number=$('#mssrp-sms-number').value.trim();const message=$('#mssrp-sms-body').value.trim();if(!number||!message)return;try{const{error}=await supabase.rpc('mssrp_send_sms',{p_recipient_phone:number,p_body:message});if(error)throw error;$('#mssrp-sms-body').value='';toast('SMS skickat.');await mssrpPhoneRefresh();}catch(error){toast(error.message||'SMS kunde inte skickas.');}});
+}
+
+function renderMssrpPhoneContactsApp() {
+  const body=$('#mssrp-phone-app-body'); if(!body)return;
+  const seen=new Map();
+  [...(mssrpPhoneData.sms||[]),...(mssrpPhoneData.calls||[])].forEach(x=>{const outgoing=x.sender_id===currentUser?.id||x.caller_id===currentUser?.id;const n=outgoing?(x.recipient_phone):(x.sender_phone||x.caller_phone);if(n&&!seen.has(n))seen.set(n,outgoing?(x.recipient_name):(x.sender_name||x.caller_name));});
+  body.innerHTML=`<div class="mssrp-phone-app-inner"><div class="mssrp-phone-section-title">Kontakter</div><div class="mssrp-phone-contacts">${seen.size?[...seen.entries()].map(([n,name])=>`<div class="mssrp-phone-contact"><span class="phone-contact-avatar">${escapeHtml((name||'?').slice(0,1).toUpperCase())}</span><span><strong>${escapeHtml(name||'Okänd')}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(n))}</small></span><button type="button" data-contact-call="${escapeHtml(n)}">☎</button><button type="button" data-contact-sms="${escapeHtml(n)}">SMS</button></div>`).join(''):'<div class="mssrp-phone-empty">Kontakter skapas automatiskt från dina samtal och SMS.</div>'}</div></div>`;
+  body.querySelectorAll('[data-contact-call]').forEach(b=>b.addEventListener('click',async()=>{try{const{error}=await supabase.rpc('mssrp_start_call',{p_recipient_phone:b.dataset.contactCall});if(error)throw error;toast('Ringer…');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}));
+  body.querySelectorAll('[data-contact-sms]').forEach(b=>b.addEventListener('click',()=>{renderMssrpPhoneApp('sms');setTimeout(()=>{const i=$('#mssrp-sms-number');if(i)i.value=b.dataset.contactSms;},0);}));
+}
+
+function bindMssrpPhoneEvents() {
+  const shell=$('#mssrp-phone-shell'); if(!shell || shell.dataset.bound==='1')return;
+  shell.dataset.bound='1';
+  shell.addEventListener('click',async event=>{
+    const app=event.target.closest('[data-phone-app]'); if(app){event.preventDefault();renderMssrpPhoneApp(app.dataset.phoneApp);return;}
+    const answer=event.target.closest('[data-phone-answer]'); if(answer){try{const{error}=await supabase.rpc('mssrp_update_call',{p_call_id:answer.dataset.phoneAnswer,p_status:'accepted'});if(error)throw error;toast('Samtal besvarat.');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}
+    const reject=event.target.closest('[data-phone-reject]'); if(reject){try{const{error}=await supabase.rpc('mssrp_update_call',{p_call_id:reject.dataset.phoneReject,p_status:'rejected'});if(error)throw error;toast('Samtalet avvisades.');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}
+    const end=event.target.closest('[data-phone-end]'); if(end){try{const{error}=await supabase.rpc('mssrp_update_call',{p_call_id:end.dataset.phoneEnd,p_status:'ended'});if(error)throw error;toast('Samtalet avslutades.');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}
+  });
+}
+
+async function initMssrpPhone() {
+  if (!$('#mssrp-phone-shell')) return;
+  bindMssrpPhoneEvents();
+  if (!currentUser) return;
+  try {
+    const { data, error } = await supabase.rpc('mssrp_ensure_phone_number');
+    if (error) throw error;
+    mssrpPhoneData.phone_number = data?.phone_number || '';
+  } catch (error) { console.error('Phone setup failed:', error); }
+  document.querySelectorAll('[data-phone-open]').forEach(button => {
+    if (button.dataset.phoneBound === '1') return;
+    button.dataset.phoneBound = '1';
+    button.addEventListener('click', () => {
+      navigateToPortalPage('phone');
+      setTimeout(() => renderMssrpPhoneApp(button.dataset.phoneOpen || 'home'), 0);
+    });
+  });
+  renderMssrpPhoneHome();
+  await mssrpPhoneRefresh();
+  clearInterval(mssrpPhonePollTimer);
+  mssrpPhonePollTimer=setInterval(mssrpPhoneRefresh,3500);
 }
 
 function initMssrpSocialEconomy() {
