@@ -20,6 +20,193 @@ const supabase =
     SUPABASE_ANON_KEY
   );
 
+/* ============================================================
+   SWISH / PAYROLL HELPERS
+   ============================================================ */
+/**
+ * Skickar pengar via Swish (mellan användare eller konton)
+ * @param {string} senderPhone - Avsändarens nummer
+ * @param {string} receiverPhone - Mottagarens nummer
+ * @param {number} amount - Belopp att överföra
+ */
+async function sendSwish(senderPhone, receiverPhone, amount) {
+  try {
+    const numAmount = Number(amount);
+    if (!senderPhone || !receiverPhone || numAmount <= 0) {
+      alert('Vänligen ange giltigt telefonnummer och belopp.');
+      return false;
+    }
+
+    // 1. Hämta avsändarens konto
+    const { data: sender, error: senderErr } = await supabase
+      .from('bank_accounts')
+      .select('*')
+      .eq('phone_number', senderPhone)
+      .single();
+
+    if (senderErr || !sender) {
+      alert('Avsändarkontot hittades inte.');
+      return false;
+    }
+
+    if (sender.balance < numAmount) {
+      alert('Saldot räcker inte till.');
+      return false;
+    }
+
+    // 2. Hämta mottagarens konto
+    const { data: receiver, error: receiverErr } = await supabase
+      .from('bank_accounts')
+      .select('*')
+      .eq('phone_number', receiverPhone)
+      .single();
+
+    if (receiverErr || !receiver) {
+      alert('Mottagarens Swish-nummer hittades inte.');
+      return false;
+    }
+
+    // 3. Dra pengar från avsändaren
+    const { error: deductErr } = await supabase
+      .from('bank_accounts')
+      .update({ balance: sender.balance - numAmount })
+      .eq('id', sender.id);
+
+    if (deductErr) throw deductErr;
+
+    // 4. Lägg till pengar hos mottagaren
+    const { error: addErr } = await supabase
+      .from('bank_accounts')
+      .update({ balance: receiver.balance + numAmount })
+      .eq('id', receiver.id);
+
+    if (addErr) throw addErr;
+
+    // 5. Spara transaktionshistorik
+    await supabase.from('transactions').insert([
+      {
+        sender_id: sender.id,
+        receiver_id: receiver.id,
+        amount: numAmount,
+        type: 'swish',
+        created_at: new Date()
+      }
+    ]);
+
+    alert(`Swish på ${numAmount} kr skickat till ${receiverPhone}!`);
+    return true;
+
+  } catch (err) {
+    console.error('Fel vid Swish-överföring:', err.message);
+    alert('Ett fel uppstod vid Swish-betalningen: ' + err.message);
+    return false;
+  }
+}
+
+// ==========================================
+// 3. LÖNEHANTERING (PAYROLL)
+// ==========================================
+
+/**
+ * Hämtar lönen för ett visst jobb och en viss grad/roll
+ * @param {string} jobName - Namn på jobbet (t.ex. 'police', 'cardealer')
+ * @param {number} grade - Rollens grad/nivå (t.ex. 0, 1, 2)
+ */
+async function getSalary(jobName, grade) {
+  try {
+    const { data, error } = await supabase
+      .from('payroll')
+      .select('salary')
+      .eq('job_name', jobName)
+      .eq('grade', Number(grade))
+      .maybeSingle();
+
+    if (error) {
+      console.error('Fel vid hämtning av lön:', error.message);
+      return 500; // Standardlön om fel uppstår
+    }
+
+    return data ? data.salary : 500;
+  } catch (err) {
+    console.error('Oväntat fel vid getSalary:', err);
+    return 500;
+  }
+}
+
+/**
+ * Ändrar eller skapar lön för en specifik roll (payroll)
+ * @param {string} jobName - Namn på jobbet
+ * @param {number} grade - Rollens grad/nivå
+ * @param {number} newSalary - Det nya lönebeloppet
+ */
+async function setSalary(jobName, grade, newSalary) {
+  try {
+    const salaryVal = Number(newSalary);
+    const gradeVal = Number(grade);
+
+    if (!jobName || isNaN(gradeVal) || isNaN(salaryVal)) {
+      alert('Ogiltiga uppgifter för lön.');
+      return false;
+    }
+
+    const { data, error } = await supabase
+      .from('payroll')
+      .upsert(
+        { 
+          job_name: jobName, 
+          grade: gradeVal, 
+          salary: salaryVal 
+        },
+        { onConflict: 'job_name, grade' }
+      );
+
+    if (error) {
+      console.error('Fel vid sparande av lön:', error.message);
+      alert('Kunde inte spara lönen: ' + error.message);
+      return false;
+    }
+
+    console.log(`Lön för ${jobName} (Grad ${gradeVal}) sattes till ${salaryVal} kr.`);
+    alert(`Lönen för ${jobName} (Grad ${gradeVal}) har uppdaterats till ${salaryVal} kr!`);
+    return true;
+
+  } catch (err) {
+    console.error('Oväntat fel vid setSalary:', err);
+    return false;
+  }
+}
+
+
+// ==========================================
+// SWISH- OCH LÖNEFORMULÄR
+// ==========================================
+function bindSwishPayrollForms() {
+  const swishForm = document.getElementById('swish-form');
+  if (swishForm && swishForm.dataset.bound !== '1') {
+    swishForm.dataset.bound = '1';
+    swishForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const senderPhone = document.getElementById('sender-phone')?.value;
+      const receiverPhone = document.getElementById('receiver-phone')?.value;
+      const amount = document.getElementById('swish-amount')?.value;
+      await sendSwish(senderPhone, receiverPhone, amount);
+    });
+  }
+
+  const payrollForm = document.getElementById('payroll-form');
+  if (payrollForm && payrollForm.dataset.bound !== '1') {
+    payrollForm.dataset.bound = '1';
+    payrollForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const jobName = document.getElementById('job-name')?.value;
+      const grade = document.getElementById('job-grade')?.value;
+      const salary = document.getElementById('job-salary')?.value;
+      await setSalary(jobName, grade, salary);
+    });
+  }
+}
+
+
 
 /* ============================================================
    GLOBAL STATE
@@ -9239,6 +9426,7 @@ async function init() {
   bindEvents();
   bindPortalEvents();
   bindBankEvents();
+  bindSwishPayrollForms();
   initPortalTabs();
 
   updateAuthModal();
