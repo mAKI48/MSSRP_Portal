@@ -9035,6 +9035,7 @@ function renderBankTransactions(rows, account) {
 async function loadMssrpBank() {
   const page = $('#bank');
   if (!page) return;
+  ensureSwishTransferUI();
 
   if (!currentUser?.id) {
     setBankText('#bank-user-name', 'Inte inloggad');
@@ -9173,6 +9174,87 @@ async function loadMssrpBank() {
       `;
     }
   }
+}
+
+function ensureSwishTransferUI() {
+  const page = document.querySelector('#bank');
+  if (!page || page.querySelector('#mssrp-swish-launcher')) return;
+
+  if (!document.getElementById('mssrp-swish-ui-style')) {
+    const style = document.createElement('style');
+    style.id = 'mssrp-swish-ui-style';
+    style.textContent = `
+      .mssrp-swish-card{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px;margin:18px 0;background:linear-gradient(120deg,#f8d83a,#f5c928);color:#17201b;border-radius:22px;box-shadow:0 8px 24px #00000018}
+      .mssrp-swish-card h3{margin:0 0 6px;font-size:22px;font-weight:800}.mssrp-swish-card p{margin:0;opacity:.82}
+      .mssrp-swish-launch{border:0;border-radius:999px;background:#153f35;color:#fff;padding:13px 22px;font-weight:800;cursor:pointer;white-space:nowrap}
+      .mssrp-swish-overlay{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;padding:18px;background:#07110dcc;backdrop-filter:blur(5px)}
+      .mssrp-swish-overlay.is-open{display:flex}.mssrp-swish-dialog{width:min(100%,430px);background:#fff;color:#17201b;border-radius:26px;padding:26px;box-shadow:0 25px 80px #0005}
+      .mssrp-swish-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.mssrp-swish-brand{font-size:26px;font-weight:900;letter-spacing:-1px}.mssrp-swish-mark{display:inline-grid;place-items:center;width:38px;height:38px;margin-right:8px;border-radius:50%;background:#f5d331;font-size:20px}
+      .mssrp-swish-close{border:0;background:#f0f1ed;border-radius:50%;width:38px;height:38px;font-size:22px;cursor:pointer}.mssrp-swish-field{display:block;margin:14px 0}.mssrp-swish-field span{display:block;font-size:13px;font-weight:750;margin-bottom:7px}.mssrp-swish-field input{box-sizing:border-box;width:100%;border:1px solid #d8ddd7;border-radius:13px;padding:14px;font-size:16px;background:#fff;color:#17201b}.mssrp-swish-submit{width:100%;border:0;border-radius:999px;padding:15px;background:#153f35;color:white;font-weight:850;font-size:16px;cursor:pointer;margin-top:10px}.mssrp-swish-submit:disabled{opacity:.6;cursor:wait}.mssrp-swish-note{font-size:12px;line-height:1.5;color:#69716b;margin:12px 0 0}
+      @media(max-width:520px){.mssrp-swish-card{align-items:flex-start;flex-direction:column}.mssrp-swish-launch{width:100%}.mssrp-swish-dialog{padding:20px}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  const card = document.createElement('section');
+  card.className = 'mssrp-swish-card';
+  card.innerHTML = `<div><h3>Swish</h3><p>Skicka pengar snabbt till någon i MSSRP.</p></div><button id="mssrp-swish-launcher" class="mssrp-swish-launch" type="button">↗ Skicka pengar</button>`;
+  page.prepend(card);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mssrp-swish-overlay';
+  overlay.id = 'mssrp-swish-overlay';
+  overlay.innerHTML = `
+    <section class="mssrp-swish-dialog" role="dialog" aria-modal="true" aria-labelledby="mssrp-swish-title">
+      <div class="mssrp-swish-head"><div class="mssrp-swish-brand"><span class="mssrp-swish-mark">↗</span><span id="mssrp-swish-title">Swish</span></div><button type="button" class="mssrp-swish-close" aria-label="Stäng">×</button></div>
+      <form id="mssrp-swish-transfer-form">
+        <label class="mssrp-swish-field"><span>Ditt telefonnummer</span><input id="mssrp-swish-sender" type="tel" autocomplete="tel" placeholder="07X XXX XX XX" required></label>
+        <label class="mssrp-swish-field"><span>Mottagarens telefonnummer</span><input id="mssrp-swish-recipient" type="tel" autocomplete="off" placeholder="07X XXX XX XX" required></label>
+        <label class="mssrp-swish-field"><span>Belopp (kr)</span><input id="mssrp-swish-amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0,00" required></label>
+        <button class="mssrp-swish-submit" id="mssrp-swish-submit" type="submit">Granska och skicka</button>
+        <p class="mssrp-swish-note">Detta är en intern överföring i appen, inte en riktig Swish-betalning. Kontrollera mottagare och belopp innan du skickar.</p>
+      </form>
+    </section>`;
+  document.body.appendChild(overlay);
+
+  const senderInput = overlay.querySelector('#mssrp-swish-sender');
+  const profilePhone = bankFirstValue(currentUser, ['phone_number', 'phone', 'phoneNumber'], '');
+  senderInput.value = profilePhone || '';
+  const close = () => overlay.classList.remove('is-open');
+  card.querySelector('#mssrp-swish-launcher').addEventListener('click', () => {
+    overlay.classList.add('is-open');
+    setTimeout(() => (senderInput.value ? overlay.querySelector('#mssrp-swish-recipient') : senderInput).focus(), 0);
+  });
+  overlay.querySelector('.mssrp-swish-close').addEventListener('click', close);
+  overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+  overlay.querySelector('#mssrp-swish-transfer-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const senderPhone = senderInput.value.trim();
+    const receiverPhone = overlay.querySelector('#mssrp-swish-recipient').value.trim();
+    const amount = Number(overlay.querySelector('#mssrp-swish-amount').value);
+    if (!senderPhone || !receiverPhone || !Number.isFinite(amount) || amount <= 0) {
+      alert('Ange giltiga telefonnummer och ett belopp över 0 kr.');
+      return;
+    }
+    const formatted = formatBankSEK(amount);
+    if (!confirm(`Skicka ${formatted} till ${receiverPhone}?`)) return;
+    const submit = overlay.querySelector('#mssrp-swish-submit');
+    submit.disabled = true;
+    submit.textContent = 'Skickar…';
+    try {
+      const success = await sendSwish(senderPhone, receiverPhone, amount);
+      if (success) {
+        overlay.querySelector('#mssrp-swish-transfer-form').reset();
+        senderInput.value = profilePhone || '';
+        close();
+        await loadMssrpBank();
+      }
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Granska och skicka';
+    }
+  });
 }
 
 function bindBankEvents() {
