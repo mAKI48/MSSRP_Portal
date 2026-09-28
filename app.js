@@ -14,6 +14,19 @@ const SUPABASE_ANON_KEY =
 
 const MSSRP_API_BASE = window.MSSRP_API_BASE || '/api';
 
+const PAYROLL_ROLE_NAMES = {
+  trainee: 'Lön1',
+  junior: 'Lön2',
+  employee: 'Lön3',
+  assistant: 'Lön4',
+  inspector: 'Lön5',
+  detective: 'Lön6',
+  field_supervisor: 'Lön7',
+  group_manager: 'Lön8',
+  operations_manager: 'Lön9',
+  director: 'Lön10'
+};
+
 const supabase =
   window.supabase.createClient(
     SUPABASE_URL,
@@ -2034,8 +2047,8 @@ async function loadAccessProfile() {
     await loadAdminUsers();
     await loadAdminPermissions();
     await loadAdminStats();
+    await loadAdminPayroll();
   }
-  startDispatchPolling();
 }
 
 function updatePortalAccess() {
@@ -2210,11 +2223,7 @@ async function saveAdminPermissions() {
 async function loadAdminStats() {
   if (!hasPermission('admin')) return;
   try {
-    const [{ count: users }, { count: activeCalls }, { count: units }] = await Promise.all([
-      supabase.from('profiles').select('id', { count:'exact', head:true }),
-      supabase.from('dispatch_calls').select('id', { count:'exact', head:true }).in('status', ['new','assigned','active']),
-      supabase.from('dispatch_units').select('id', { count:'exact', head:true }).neq('status', 'off-duty')
-    ]);
+    const { count: users } = await supabase.from('profiles').select('id', { count:'exact', head:true });
     if ($('#admin-stat-users')) $('#admin-stat-users').textContent = users ?? '0';
     if ($('#admin-stat-active-calls')) $('#admin-stat-active-calls').textContent = activeCalls ?? '0';
     if ($('#admin-stat-units')) $('#admin-stat-units').textContent = units ?? '0';
@@ -2239,178 +2248,71 @@ async function mssrpApi(path, options = {}) {
   return body;
 }
 
-let dispatchCallsCache = [];
-let dispatchUnitsCache = [];
-
-function formatCallAge(iso) {
-  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
-  return mins < 1 ? 'NU' : `${mins} MIN`;
-}
-
-function normalizeSwedishPriority(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 3;
-  return Math.min(3, Math.max(1, Math.round(n)));
-}
-
-function swedishPriorityLabel(value) {
-  const p = normalizeSwedishPriority(value);
-  return p === 1 ? 'Prio 1' : p === 2 ? 'Prio 2' : 'Prio 3';
-}
-
-function renderDispatchCalls(rows) {
-  dispatchCallsCache = rows || [];
-  const el = $('#dispatch-calls-list');
-  if (!el) return;
-  $('#dispatch-active-count') && ($('#dispatch-active-count').textContent = String(rows?.length || 0));
-  if (!rows?.length) { el.innerHTML = '<div class="cad-empty">Inga aktiva larm.</div>'; return; }
-  el.innerHTML = rows.map((call, i) => {
-    const p = normalizeSwedishPriority(call.priority);
-    const assigned = dispatchUnitsCache.filter(u => String(u.assigned_call_id) === String(call.id)).length;
-    return `<div class="cad-call" data-dispatch-call="${i}">
-      <div class="cad-priority p${p}">${swedishPriorityLabel(p)}</div>
-      <div class="cad-call-main"><strong>${escapeHtml(call.source === 'erlc' ? 'ER:LC 112' : 'MSSRP 112')} · #${escapeHtml(call.id)}</strong><span>${escapeHtml(call.location || 'Okänd plats')}</span><small>${escapeHtml(call.caller_name || 'Okänd')} · ${escapeHtml(call.description || 'Ingen beskrivning')}</small></div>
-      <div class="cad-call-meta">${formatCallAge(call.created_at)}<span class="cad-status">${assigned ? assigned+' ENH' : 'EJ TILLDELAD'}</span></div>
-    </div>`;
-  }).join('');
-  el.querySelectorAll('[data-dispatch-call]').forEach(x => x.addEventListener('click', () => openDispatchCall(Number(x.dataset.dispatchCall))));
-}
-
-function renderDispatchUnits(rows) {
-  dispatchUnitsCache = rows || [];
-  const el = $('#dispatch-units-list');
-  if (!el) return;
-  const active = rows?.filter(x => x.status !== 'off-duty') || [];
-  $('#dispatch-unit-count') && ($('#dispatch-unit-count').textContent = String(active.length));
-  $('#dispatch-assigned-count') && ($('#dispatch-assigned-count').textContent = String(active.filter(x => x.assigned_call_id).length));
-  const visibleRows = active;
-  if (!visibleRows.length) { el.innerHTML = '<div class="cad-empty">Inga enheter i tjänst.</div>'; return; }
-  el.innerHTML = visibleRows.map(unit => `<div class="cad-unit"><div class="cad-unit-left"><span class="cad-unit-dot ${unit.status === 'assigned' ? 'busy' : unit.status === 'off-duty' ? 'off' : ''}"></span><div><strong>${escapeHtml(unit.callsign)}</strong><small>${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</small></div></div><span class="cad-assignment">${unit.assigned_call_id ? '#'+escapeHtml(unit.assigned_call_id) : 'LEDIG'}</span></div>`).join('');
-}
-
-function openDispatchCall(index) {
-  const call = dispatchCallsCache[index];
-  if (!call) return;
-  const title = $('#mssrp-tool-title'), eyebrow = $('#mssrp-tool-eyebrow'), body = $('#mssrp-tool-body');
-  if (title) title.textContent = `Larm #${call.id}`;
-  if (eyebrow) eyebrow.textContent = 'CAD · CALL DETAILS';
-  const assigned = dispatchUnitsCache.filter(u => String(u.assigned_call_id) === String(call.id));
-  const available = dispatchUnitsCache.filter(u => u.status !== 'off-duty');
-  body.innerHTML = `<div class="cad-detail-grid">
-    <div class="cad-detail"><small>Prioritet</small><strong>${swedishPriorityLabel(call.priority)}</strong></div>
-    <div class="cad-detail"><small>Status</small><strong>${escapeHtml(call.status || 'new')}</strong></div>
-    <div class="cad-detail"><small>Plats</small><strong>${escapeHtml(call.location || 'Okänd')}</strong></div>
-    <div class="cad-detail"><small>Anmälare</small><strong>${escapeHtml(call.caller_name || 'Okänd')}</strong></div>
-    <div class="cad-detail"><small>Registrerat</small><strong>${escapeHtml(new Date(call.created_at).toLocaleString('sv-SE'))}</strong></div>
-    <div class="cad-detail"><small>Källa</small><strong>${escapeHtml(call.source === 'erlc' ? 'ER:LC 112' : 'MSSRP 112')}</strong></div>
-  </div>
-  <div class="cad-detail"><small>Händelse / lagöverträdelser</small><strong>${escapeHtml(call.legal_violations || 'Ej angivet')}</strong><p>${escapeHtml(call.description || '')}</p></div>
-  <div class="cad-call-actions"><button id="cad-delete-call" class="mssrp-secondary" type="button">Ta bort larm</button></div>
-  <div class="cad-assign-box" style="margin-top:12px"><span class="cad-label">TILLDELA ENHET</span><div class="cad-assign-row"><select id="cad-unit-select"><option value="">Välj ledig enhet…</option>${available.filter(u => !u.assigned_call_id || assigned.some(a => a.id === u.id)).map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.callsign)} · ${escapeHtml(u.unit_type || 'Enhet')}</option>`).join('')}</select><button id="cad-assign-btn" class="mssrp-primary" type="button">Tilldela</button></div></div>
-  <div class="cad-call-actions">${assigned.length ? assigned.map(u => `<button class="mssrp-secondary" type="button" data-unassign-unit="${escapeHtml(u.id)}">Ta bort ${escapeHtml(u.callsign)}</button>`).join('') : '<span class="mssrp-status-row">Inga enheter är tilldelade.</span>'}</div>`;
-  $('#cad-delete-call')?.addEventListener('click', async () => {
-    if (!window.confirm(`Ta bort larm #${call.id}?`)) return;
-
-    try {
-      // Frigör enheter som är kopplade till larmet
-      const { error: unitError } = await supabase
-        .from('dispatch_units')
-        .update({
-          assigned_call_id: null,
-          status: 'available'
-        })
-        .eq('assigned_call_id', call.id);
-
-      if (unitError) throw unitError;
-
-      // Markera larmet som borttaget i Supabase
-      const { data: updatedCall, error: callError } = await supabase
-        .from('dispatch_calls')
-        .update({ status: 'deleted' })
-        .eq('id', call.id)
-        .select('id,status');
-
-      if (callError) throw callError;
-
-      if (!updatedCall || updatedCall.length === 0) {
-        throw new Error(
-          'Larmet kunde inte uppdateras i Supabase. Kontrollera RLS för dispatch_calls.'
-        );
-      }
-
-      // Ta bort det direkt ur listan
-      dispatchCallsCache = dispatchCallsCache.filter(
-        c => String(c.id) !== String(call.id)
-      );
-
-      closeModal('mssrp-tool-modal');
-      renderDispatchCalls(dispatchCallsCache);
-
-      toast(`Larm #${call.id} togs bort.`);
-
-      await refreshDispatchBoard();
-      await loadAdminStats();
-
-    } catch (e) {
-      console.error('Remove dispatch call failed:', e);
-      toast(`Kunde inte ta bort larmet: ${e.message}`);
-    }
-  });
-
-  $('#cad-assign-btn')?.addEventListener('click', async () => {
-    const unitId = $('#cad-unit-select')?.value;
-    if (!unitId) return toast('Välj en enhet.');
-    try {
-      const { error } = await supabase.from('dispatch_units').update({ assigned_call_id: call.id, status: 'assigned' }).eq('id', unitId);
-      if (error) throw error;
-      toast('Enheten tilldelades larmet.'); await refreshDispatchBoard(); openDispatchCall(dispatchCallsCache.findIndex(x => x.id === call.id));
-    } catch (e) { toast(e.message || 'Kunde inte tilldela enheten.'); }
-  });
-  body.querySelectorAll('[data-unassign-unit]').forEach(btn => btn.addEventListener('click', async () => {
-    try {
-      const { error } = await supabase.from('dispatch_units').update({ assigned_call_id: null, status: 'available' }).eq('id', btn.dataset.unassignUnit);
-      if (error) throw error;
-      toast('Enheten frigjordes.'); await refreshDispatchBoard(); openDispatchCall(dispatchCallsCache.findIndex(x => x.id === call.id));
-    } catch (e) { toast(e.message || 'Kunde inte frigöra enheten.'); }
-  }));
-  showModal('mssrp-tool-modal');
-}
-
-function updateDutyUI(unit) {
-  const badge = $('#duty-status-badge'), current = $('#duty-current'), off = $('#duty-off-btn'), form = $('#duty-form');
-  if (!badge || !current || !off || !form) return;
-  const onDuty = !!unit;
-  badge.textContent = onDuty ? `I TJÄNST · ${unit.callsign}` : 'EJ I TJÄNST';
-  current.innerHTML = onDuty ? `<span class="status-dot"></span><span>Enhet <strong>${escapeHtml(unit.callsign)}</strong> · ${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</span>` : '<span>Skapa ett enhetsnummer för att gå i tjänst.</span>';
-  off.disabled = !onDuty;
-  form.querySelectorAll('input,select,button[type="submit"]').forEach(el => { el.disabled = onDuty; });
-}
-
-async function refreshDispatchBoard() {
-  if (!hasPermission('dispatch')) return;
-  const [{ data: calls, error: callsError }, { data: units, error: unitsError }] = await Promise.all([
-    supabase.from('dispatch_calls').select('id,source,caller_name,location,description,legal_violations,status,priority,created_at').in('status', ['new','assigned','active']).order('created_at', { ascending: false }).limit(50),
-    supabase.from('dispatch_units').select('id,callsign,unit_type,status,user_id,assigned_call_id').order('callsign')
-  ]);
-  if (callsError) console.error('Dispatch calls:', callsError);
-  if (unitsError) console.error('Dispatch units:', unitsError);
-  renderDispatchUnits(units || []);
-  renderDispatchCalls(calls || []);
-  if ($('#dispatch-last-update')) $('#dispatch-last-update').textContent = `Senast ${new Date().toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
-  updateDutyUI((units || []).find(x => x.user_id === currentUser?.id) || null);
-}
-
-function startDispatchPolling() {
-  clearInterval(window.__mssrpDispatchTimer);
-  if (!hasPermission('dispatch')) return;
-  refreshDispatchBoard();
-  window.__mssrpDispatchTimer = setInterval(refreshDispatchBoard, 5000);
-}
-
 async function sendErlcAdminCommand(path, payload) {
   const result = await mssrpApi(path, { method: 'POST', body: JSON.stringify(payload) });
   toast('ER:LC-kommandot skickades.');
   return result;
+}
+
+async function loadBankPage() {
+  if (!currentUser) {
+    navigateToPortalPage('home');
+    isLoginMode = true; updateAuthModal(); showModal('auth-modal');
+    return;
+  }
+  try {
+    const data = await mssrpApi('/bank/account');
+    $('#bank-user-name') && ($('#bank-user-name').textContent = data.profile?.display_name || currentUser.email || 'Användare');
+    $('#bank-role-line') && ($('#bank-role-line').textContent = `${data.payroll?.role_name || 'Ingen löneklass'} · MSSRP BANK`);
+    $('#bank-balance') && ($('#bank-balance').textContent = Number(data.account?.balance || 0).toLocaleString('sv-SE', {minimumFractionDigits:2, maximumFractionDigits:2}));
+    $('#bank-payroll-role') && ($('#bank-payroll-role').textContent = data.payroll?.role_name || 'Ingen löneklass');
+    $('#bank-paycheck') && ($('#bank-paycheck').textContent = `${Number(data.payroll?.monthly_salary || 0).toLocaleString('sv-SE')} kr`);
+    $('#bank-account-number') && ($('#bank-account-number').textContent = data.account?.account_number || '—');
+    $('#bank-next-payday') && ($('#bank-next-payday').textContent = data.payroll?.next_payday ? new Date(data.payroll.next_payday).toLocaleDateString('sv-SE') : '—');
+    const list = $('#bank-transactions-list');
+    if (list) list.innerHTML = (data.transactions || []).length ? data.transactions.map(t => {
+      const amount = Number(t.amount || 0); const positive = amount >= 0;
+      return `<div class="mssrp-bank-transaction"><div class="mssrp-bank-transaction-icon">${positive ? '↓' : '↑'}</div><div><strong>${escapeHtml(t.description || 'Bankhändelse')}</strong><small>${new Date(t.created_at).toLocaleString('sv-SE')}</small></div><b class="${positive ? 'positive' : 'negative'}">${positive ? '+' : ''}${amount.toLocaleString('sv-SE')} kr</b></div>`;
+    }).join('') : '<div class="mssrp-bank-empty">Inga transaktioner ännu.</div>';
+  } catch (error) {
+    console.error('Bank load failed:', error);
+    toast(error.message || 'Kunde inte läsa banken.');
+    const list = $('#bank-transactions-list'); if (list) list.innerHTML = '<div class="mssrp-bank-empty">Banktjänsten kunde inte laddas.</div>';
+  }
+}
+
+async function loadAdminPayroll() {
+  if (!hasPermission('admin')) return;
+  try {
+    const data = await mssrpApi('/admin/payroll');
+    const rolesBox = $('#admin-payroll-roles');
+    if (rolesBox) rolesBox.innerHTML = (data.roles || []).map(r => `<div class="mssrp-payroll-role"><div><strong>${escapeHtml(r.name)}</strong><small>${escapeHtml(r.description || '')}</small></div><div class="mssrp-payroll-edit"><input type="number" min="0" step="100" data-payroll-role="${r.id}" value="${Number(r.monthly_salary || 0)}"><span>kr/dag</span><button class="mssrp-secondary" type="button" data-save-payroll-role="${r.id}">Spara</button></div></div>`).join('');
+    const search = ($('#admin-payroll-search')?.value || '').toLowerCase().trim();
+    const users = (data.users || []).filter(u => `${u.display_name || ''} ${u.id}`.toLowerCase().includes(search));
+    const tbody = $('#admin-payroll-users');
+    if (tbody) tbody.innerHTML = users.length ? users.map(u => {
+      const opts = (data.roles || []).map(r => `<option value="${r.id}" ${String(r.id) === String(u.payroll_role_id) ? 'selected' : ''}>${escapeHtml(r.name)} · ${Number(r.monthly_salary).toLocaleString('sv-SE')} kr</option>`).join('');
+      return `<tr><td><strong>${escapeHtml(u.display_name || 'Okänd')}</strong><small>${escapeHtml(u.id)}</small></td><td><select class="mssrp-payroll-select" data-payroll-user="${u.id}">${opts}</select></td><td>${Number(u.monthly_salary || 0).toLocaleString('sv-SE')} kr</td><td><button class="mssrp-secondary" type="button" data-save-payroll-user="${u.id}">Tilldela</button> <button class="mssrp-primary" type="button" data-pay-user="${u.id}">Betala idag</button></td></tr>`;
+    }).join('') : '<tr><td colspan="4">Inga användare hittades.</td></tr>';
+    $$('#admin-payroll-roles [data-save-payroll-role]').forEach(btn => btn.addEventListener('click', async () => {
+      const input = $(`[data-payroll-role="${CSS.escape(btn.dataset.savePayrollRole)}"]`); const salary = Number(input?.value);
+      if (!Number.isFinite(salary) || salary < 0) return toast('Ogiltig lön.');
+      try { await mssrpApi(`/admin/payroll/roles/${btn.dataset.savePayrollRole}`, {method:'PUT', body:JSON.stringify({monthly_salary:salary})}); toast('Lönen uppdaterades.'); await loadAdminPayroll(); }
+      catch(e){ toast(e.message); }
+    }));
+    $$('#admin-payroll-users [data-save-payroll-user]').forEach(btn => btn.addEventListener('click', async () => {
+      const select = $(`[data-payroll-user="${CSS.escape(btn.dataset.savePayrollUser)}"]`); if (!select?.value) return;
+      try { await mssrpApi('/admin/payroll/assign', {method:'POST', body:JSON.stringify({user_id:btn.dataset.savePayrollUser, payroll_role_id:select.value})}); toast('Löneklass tilldelad.'); await loadAdminPayroll(); }
+      catch(e){ toast(e.message); }
+    }));
+    $$('#admin-payroll-users [data-pay-user]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!confirm('Betala dagens lön till användarens MSSRP-bankkonto?')) return;
+      try { await mssrpApi('/admin/payroll/pay', {method:'POST', body:JSON.stringify({user_id:btn.dataset.payUser})}); toast('Dagens lön betalades ut.'); await loadAdminPayroll(); }
+      catch(e){ toast(e.message); }
+    }));
+  } catch (error) {
+    console.error('Payroll load failed:', error); const box=$('#admin-payroll-users'); if(box) box.innerHTML='<tr><td colspan="4">Kunde inte läsa payroll-data.</td></tr>'; toast(error.message || 'Kunde inte läsa löner.');
+  }
 }
 
 function initPortalTabs() {
@@ -2717,190 +2619,15 @@ function openRoleplayTool(tool) {
   showModal('mssrp-tool-modal');
 }
 
-async function searchPolicePersons() {
-  if (!requireFeature('police_database')) return;
-
-  const query = $('#police-person-search')?.value.trim() || '';
-  const results = $('#police-person-results');
-  if (!results) return;
-
-  results.innerHTML = '<span>Söker…</span>';
-
-  try {
-    let data, error;
-    const uuid = query.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-    try {
-      let request = supabase.from('profiles').select('id,display_name,roblox_username').order('display_name').limit(50);
-      if (query) {
-        const safe = query.replace(/[%_]/g, '\$&').replace(/,/g, ' ');
-        request = uuid ? request.eq('id', query) : request.or(`roblox_username.ilike.%${safe}%,display_name.ilike.%${safe}%`);
-      }
-      ({ data, error } = await request);
-      if (error) throw error;
-    } catch (firstError) {
-      let request = supabase.from('profiles').select('id,display_name').order('display_name').limit(50);
-      if (query) request = uuid ? request.eq('id', query) : request.ilike('display_name', `%${query.replace(/[%_]/g, '\$&')}%`);
-      ({ data, error } = await request);
-    }
-    if (error) throw error;
-
-    if (!data?.length) {
-      results.innerHTML = '<span>Inga personer hittades.</span>';
-      return;
-    }
-
-    results.innerHTML = data.map(person => `
-      <div class="mssrp-list-item">
-        <div>
-          <strong>${escapeHtml(person.roblox_username || person.display_name || 'Okänd')}</strong>
-          <small>Roblox · ${escapeHtml(person.display_name || person.id || '')}</small>
-        </div>
-      </div>
-    `).join('');
-  } catch (error) {
-    console.error('Police person search failed:', error);
-    results.innerHTML = `<span>Kunde inte läsa polisregistret: ${escapeHtml(error.message || 'Okänt fel')}</span>`;
-  }
-}
-
-async function loadPoliceCases() {
-  if (!requireFeature('police_database')) return;
-
-  const results = $('#police-case-results');
-  if (!results) return;
-
-  results.innerHTML = '<span>Hämtar ärenden…</span>';
-
-  try {
-    const { data, error } = await supabase
-      .from('dispatch_calls')
-      .select('id,caller_name,location,description,status,priority,created_at')
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (error) throw error;
-
-    if (!data?.length) {
-      results.innerHTML = '<span>Inga ärenden hittades.</span>';
-      return;
-    }
-
-    results.innerHTML = data.map(item => `
-      <div class="mssrp-list-item">
-        <div>
-          <strong>${escapeHtml(item.location || 'Okänd plats')}</strong>
-          <small>${escapeHtml(item.caller_name || 'Okänd')} · ${escapeHtml(item.status || 'new')}</small>
-          <small>${escapeHtml(item.description || '')}</small>
-        </div>
-        <b>${swedishPriorityLabel(item.priority)}</b>
-      </div>
-    `).join('');
-  } catch (error) {
-    console.error('Police cases failed:', error);
-    results.innerHTML = `<span>Kunde inte läsa ärenden: ${escapeHtml(error.message || 'Okänt fel')}</span>`;
-  }
-}
-
-function openNewPolicePost() {
-  if (!requireFeature('police_database')) return;
-
-  const title = $('#mssrp-tool-title');
-  const eyebrow = $('#mssrp-tool-eyebrow');
-  const body = $('#mssrp-tool-body');
-  if (!body) return;
-
-  if (title) title.textContent = 'Ny polispost';
-  if (eyebrow) eyebrow.textContent = 'POLISREGISTER';
-
-  body.innerHTML = `
-    <form id="mssrp-police-post-form" class="mssrp-tool-form">
-      <label>Namn / identifiering
-        <input id="police-post-name" required maxlength="120" placeholder="Namn eller RP-ID">
-      </label>
-      <label>Typ
-        <select id="police-post-type">
-          <option value="anteckning">Anteckning</option>
-          <option value="varning">Varning</option>
-          <option value="efterlysning">Efterlysning</option>
-          <option value="övrigt">Övrigt</option>
-        </select>
-      </label>
-      <label>Beskrivning
-        <textarea id="police-post-description" required maxlength="3000" placeholder="Beskriv registreringen…"></textarea>
-      </label>
-      <div class="mssrp-actions">
-        <button class="mssrp-primary" type="submit">Spara post</button>
-      </div>
-    </form>
-    <div class="mssrp-kicker" style="margin-top:22px">LOKALA POSTER</div>
-    <div id="mssrp-police-post-list" class="mssrp-tool-modal-list"></div>
-    <small>Den uppladdade appkoden innehåller ingen polisregister-tabell i Supabase, så nya poster sparas lokalt tills en sådan tabell kopplas in.</small>
-  `;
-
-  const key = `mssrp_police_posts_${currentUser.id}`;
-
-  const getRows = () => {
-    try {
-      const value = JSON.parse(localStorage.getItem(key) || '[]');
-      return Array.isArray(value) ? value : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const render = () => {
-    const list = $('#mssrp-police-post-list');
-    if (!list) return;
-
-    const rows = getRows();
-    list.innerHTML = rows.length ? rows.map((row, index) => `
-      <div class="mssrp-tool-record">
-        <strong>${escapeHtml(row.name)} · ${escapeHtml(row.type)}</strong>
-        <small>${escapeHtml(row.description)}</small>
-        <div style="margin-top:8px">
-          <button type="button" class="mssrp-secondary" data-police-post-delete="${index}">Ta bort</button>
-        </div>
-      </div>
-    `).join('') : '<div class="mssrp-status-row">Inga lokala poster ännu.</div>';
-
-    list.querySelectorAll('[data-police-post-delete]').forEach(button => {
-      button.addEventListener('click', () => {
-        const rows = getRows();
-        rows.splice(Number(button.dataset.policePostDelete), 1);
-        localStorage.setItem(key, JSON.stringify(rows));
-        render();
-      });
-    });
-  };
-
-  $('#mssrp-police-post-form')?.addEventListener('submit', event => {
+function bindPortalEvents() {
+  // Bank is a signed-in-only portal page.
+  $('[data-bank-nav]')?.addEventListener('click', event => {
     event.preventDefault();
-
-    const row = {
-      name: $('#police-post-name')?.value.trim(),
-      type: $('#police-post-type')?.value,
-      description: $('#police-post-description')?.value.trim(),
-      created_at: new Date().toISOString()
-    };
-
-    if (!row.name || !row.description) {
-      toast('Fyll i namn och beskrivning.');
-      return;
-    }
-
-    const rows = getRows();
-    rows.unshift(row);
-    localStorage.setItem(key, JSON.stringify(rows));
-    event.target.reset();
-    render();
-    toast('Polisposten sparades.');
+    if (!currentUser) { isLoginMode = true; updateAuthModal(); showModal('auth-modal'); toast('Logga in för att öppna banken.'); return; }
+    navigateToPortalPage('bank');
+    loadBankPage();
   });
 
-  render();
-  showModal('mssrp-tool-modal');
-}
-
-function bindPortalEvents() {
   // One delegated handler covers both static and dynamically rendered buttons/cards.
   document.addEventListener('click', event => {
     const featureEl = event.target.closest('[data-feature]');
@@ -2921,8 +2648,8 @@ function bindPortalEvents() {
       return;
     }
     const pageMap = {
-      call_112:'112', police_database:'police', dispatch:'dispatch', roleplay_system:'roleplay',
-      tactical_plan:'tactical', roblox_integration:'roblox', admin:'admin'
+      roleplay_system:'roleplay',
+      bank:'bank', tactical_plan:'tactical', roblox_integration:'roblox', admin:'admin'
     };
     const pageId = pageMap[feature];
     if (pageId) navigateToPortalPage(pageId);
@@ -2940,156 +2667,15 @@ function bindPortalEvents() {
   });
 
   $('#admin-refresh-top')?.addEventListener('click', async () => {
-    await Promise.all([loadAdminUsers(), loadAdminPermissions(), loadAdminStats()]);
+    await Promise.all([loadAdminUsers(), loadAdminPermissions(), loadAdminStats(), loadAdminPayroll()]);
     toast('Adminpanelen uppdaterad.');
   });
   $('#admin-reload-permissions')?.addEventListener('click', loadAdminPermissions);
   $('#admin-role-select')?.addEventListener('change', renderAdminPermissionEditor);
   $('#admin-save-permissions')?.addEventListener('click', saveAdminPermissions);
   $('#admin-user-search')?.addEventListener('input', () => loadAdminUsers());
-
-  $('#portal-112-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!requireFeature('call_112')) return;
-    const roblox = $('#portal-112-roblox')?.value.trim();
-    const discord = $('#portal-112-discord')?.value.trim();
-    const district = $('#portal-112-district')?.value.trim();
-    const location = $('#portal-112-location')?.value.trim();
-    const postcode = $('#portal-112-postcode')?.value.trim();
-    const legalViolations = $('#portal-112-violations')?.value.trim();
-    const description = $('#portal-112-description')?.value.trim();
-    const units = $$('#portal-112-units option:checked').map(option => option.value);
-    const priority = normalizeSwedishPriority($('#portal-112-priority')?.value || 3);
-    if (!roblox || !location || !legalViolations || !description) {
-      toast('Fyll i Roblox-namn, plats, lagöverträdelser och beskrivning.');
-      return;
-    }
-    const button = event.target.querySelector('button[type="submit"]');
-    if (button) button.disabled = true;
-    try {
-      const rawPayload = { roblox_username: roblox, discord_username: discord, district, postcode, requested_units: units };
-      const { error } = await supabase.from('dispatch_calls').insert({
-        caller_id: currentUser.id,
-        caller_name: roblox,
-        location,
-        description,
-        legal_violations: legalViolations,
-        priority,
-        raw_payload: rawPayload
-      });
-      if (error) throw error;
-      event.target.reset();
-      toast('112-larm skickat till Dispatch.');
-      navigateToPortalPage('dispatch');
-    } catch (error) {
-      console.error(error);
-      toast(error.message || 'Kunde inte skicka larmet.');
-    } finally {
-      if (button) button.disabled = false;
-    }
-  });
-
-  $('#dispatch-refresh')?.addEventListener('click', refreshDispatchBoard);
-
-  $('#duty-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (!requireFeature('dispatch')) return;
-
-    const callsign = $('#duty-callsign')?.value.trim();
-    const unitType = $('#duty-unit-type')?.value || 'patrol';
-    if (!callsign) { toast('Ange ett enhetsnummer.'); return; }
-    if (!currentUser?.id) { toast('Du måste vara inloggad.'); return; }
-
-    const button = event.target.querySelector('button[type="submit"]');
-    if (button) button.disabled = true;
-
-    try {
-      // Do not depend on the optional /api backend for duty status.
-      // Create the unit directly in Supabase instead.
-      const { data: existing, error: existingError } = await supabase
-        .from('dispatch_units')
-        .select('id,callsign,unit_type,status,user_id,assigned_call_id')
-        .eq('user_id', currentUser.id)
-        .maybeSingle();
-
-      if (existingError) throw existingError;
-
-      // Prevent two active units with the same callsign.
-      const { data: sameCallsign, error: callsignError } = await supabase
-        .from('dispatch_units')
-        .select('id,user_id,callsign,status')
-        .eq('callsign', callsign)
-        .neq('user_id', currentUser.id)
-        .neq('status', 'off-duty')
-        .limit(1);
-
-      if (callsignError) throw callsignError;
-      if (sameCallsign?.length) {
-        throw new Error(`Enhetsnumret ${callsign} används redan.`);
-      }
-
-      let unit;
-
-      if (existing?.id) {
-        const { data, error } = await supabase
-          .from('dispatch_units')
-          .update({
-            callsign,
-            unit_type: unitType,
-            status: existing.assigned_call_id ? 'assigned' : 'available'
-          })
-          .eq('id', existing.id)
-          .select('id,callsign,unit_type,status,user_id,assigned_call_id')
-          .single();
-        if (error) throw error;
-        unit = data;
-      } else {
-        const { data, error } = await supabase
-          .from('dispatch_units')
-          .insert({
-            callsign,
-            unit_type: unitType,
-            status: 'available',
-            user_id: currentUser.id,
-            assigned_call_id: null
-          })
-          .select('id,callsign,unit_type,status,user_id,assigned_call_id')
-          .single();
-        if (error) throw error;
-        unit = data;
-      }
-
-      toast(`Enhet ${unit.callsign} är nu i tjänst.`);
-      await refreshDispatchBoard();
-    } catch (error) {
-      console.error('Going on duty failed:', error);
-      toast(error.message || 'Kunde inte skapa enheten. Kontrollera Supabase RLS och kolumnerna i dispatch_units.');
-    } finally {
-      if (button) button.disabled = false;
-    }
-  });
-
-  $('#duty-off-btn')?.addEventListener('click', async () => {
-    if (!requireFeature('dispatch')) return;
-    if (!currentUser?.id) return toast('Du måste vara inloggad.');
-
-    try {
-      const { error } = await supabase
-        .from('dispatch_units')
-        .update({
-          status: 'off-duty',
-          assigned_call_id: null
-        })
-        .eq('user_id', currentUser.id);
-
-      if (error) throw error;
-      toast('Du har gått ur tjänst.');
-      await refreshDispatchBoard();
-    } catch (error) {
-      console.error('Going off duty failed:', error);
-      toast(error.message || 'Kunde inte gå ur tjänst.');
-    }
-  });
+  $('#admin-payroll-search')?.addEventListener('input', () => loadAdminPayroll());
+  $('#bank-refresh')?.addEventListener('click', loadBankPage);
 
   $('#erlc-hint-form')?.addEventListener('submit', async event => {
     event.preventDefault();
@@ -3112,12 +2698,6 @@ function bindPortalEvents() {
     catch (error) { toast(error.message); }
   });
 
-  $('#police-person-search-form')?.addEventListener('submit', event => {
-    event.preventDefault();
-    searchPolicePersons();
-  });
-  $('#police-load-cases')?.addEventListener('click', loadPoliceCases);
-  $('#police-new-post')?.addEventListener('click', openNewPolicePost);
 
   $$('[data-roleplay-tool]').forEach(button => {
     if (button.dataset.feature) return;
@@ -3128,7 +2708,6 @@ function bindPortalEvents() {
     toast(`${item.querySelector('strong')?.textContent || 'Shop'} är en rollspelsfunktion och är redo för vidare innehåll.`);
   }));
 
-  startDispatchPolling();
 }
 
 /* ============================================================
@@ -8590,6 +8169,7 @@ async function init() {
 
   await checkAuth();
   await loadAccessProfile();
+  if (window.location.hash === '#bank' && currentUser) await loadBankPage();
   await checkPasswordRecovery();
 
   setTool(
