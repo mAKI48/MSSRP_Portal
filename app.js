@@ -1735,7 +1735,16 @@ async function checkPasswordRecovery() {
 
 function bindPasswordRecoveryListener() {
   try {
-    supabase.auth.onAuthStateChange(event => {
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) currentUser = session.user;
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        updateAuthUI();
+        setTimeout(() => loadMssrpBank(), 0);
+      } else if (event === 'SIGNED_OUT') {
+        currentUser = null;
+        updateAuthUI();
+        setTimeout(() => loadMssrpBank(), 0);
+      }
       if (event === 'PASSWORD_RECOVERY') {
         ensurePasswordResetUI();
         document.getElementById('newPasswordModal')?.classList.remove('hidden');
@@ -8796,14 +8805,10 @@ async function loadMssrpBank() {
     /*
       Accounts
     */
-    if (!accountsResult.ok) {
-      throw new Error(
-        'Bankkontot kunde inte läsas från Supabase. ' +
-        'Kontrollera att bank_accounts eller mssrp_bank_accounts finns och att RLS tillåter användaren att läsa sitt konto.'
-      );
-    }
-
-    const account = accountsResult.userRows[0] || null;
+    // The bank page must still render even when the optional bank tables
+    // have not been created yet. In that case we show a valid empty account
+    // instead of aborting the whole Bank page.
+    const account = accountsResult.ok ? (accountsResult.userRows[0] || null) : null;
 
     if (!account) {
       setBankText('#bank-balance', '0 kr');
@@ -8909,9 +8914,9 @@ function bindBankEvents() {
     loadMssrpBank();
   });
 
-  $('[data-bank-nav]')?.addEventListener('click', () => {
-    // Wait one tick so auth/navigation state has settled.
-    setTimeout(loadMssrpBank, 0);
+  document.addEventListener('click', event => {
+    const bankLink = event.target.closest('[data-bank-nav]');
+    if (bankLink) setTimeout(() => loadMssrpBank(), 0);
   });
 }
 
