@@ -1830,18 +1830,24 @@ function updateLoginGate() {
 function updateAuthUI() {
   updateLoginGate();
   const loginButton = $('#btn-login');
+  const heroLoginButton = $('#btn-login-hero');
   const userInfo = $('#user-info');
   const email = $('#user-email');
   const badge = $('#user-role-badge');
+  const logoutButton = $('#btn-logout');
 
   if (currentUser) {
     hide(loginButton);
+    hide(heroLoginButton);
     show(userInfo);
+    show(logoutButton);
     if (email) email.textContent = currentUser.email || '';
     if (badge) badge.textContent = accessRoles.length ? accessRoles.map(formatRoleName).join(' + ') : 'Civil';
   } else {
     show(loginButton);
+    show(heroLoginButton);
     hide(userInfo);
+    hide(logoutButton);
     if (badge) badge.textContent = 'Ej inloggad';
   }
   updatePortalAccess();
@@ -2059,6 +2065,7 @@ async function loadAccessProfile() {
     await loadAdminUsers();
     await loadAdminPermissions();
     await loadAdminStats();
+    await loadAdminPayroll();
   }
   startDispatchPolling();
 }
@@ -2955,13 +2962,14 @@ function bindPortalEvents() {
   });
 
   $('#admin-refresh-top')?.addEventListener('click', async () => {
-    await Promise.all([loadAdminUsers(), loadAdminPermissions(), loadAdminStats()]);
+    await Promise.all([loadAdminUsers(), loadAdminPermissions(), loadAdminStats(), loadAdminPayroll()]);
     toast('Adminpanelen uppdaterad.');
   });
   $('#admin-reload-permissions')?.addEventListener('click', loadAdminPermissions);
   $('#admin-role-select')?.addEventListener('change', renderAdminPermissionEditor);
   $('#admin-save-permissions')?.addEventListener('click', saveAdminPermissions);
   $('#admin-user-search')?.addEventListener('input', () => loadAdminUsers());
+  bindAdminPayrollEvents();
 
   $('#portal-112-form')?.addEventListener('submit', async event => {
     event.preventDefault();
@@ -8982,6 +8990,227 @@ function bindBankEvents() {
     const bankLink = event.target.closest('[data-bank-nav]');
     if (bankLink) setTimeout(() => loadMssrpBank(), 0);
   });
+}
+
+
+function mssrpPayrollRoleCatalog() {
+  return [
+    { name: 'Civil', salary: 0 },
+    { name: 'Polis', salary: 1500 },
+    { name: 'Polis - Aspirant', salary: 1000 },
+    { name: 'Dispatcher', salary: 1200 },
+    { name: 'FRI', salary: 1800 },
+    { name: 'NI', salary: 2000 },
+    { name: 'Admin', salary: 0 }
+  ];
+}
+
+function payrollEscape(value) {
+  return escapeHtml(String(value ?? ''));
+}
+
+async function adminFindPayrollTable() {
+  const cached = mssrpBankTableCache.payroll;
+  if (cached) {
+    const test = await bankReadCandidate(cached, null);
+    if (test.ok) return test;
+    delete mssrpBankTableCache.payroll;
+  }
+  for (const table of MSSRP_BANK_TABLES.payroll) {
+    const result = await bankReadCandidate(table, null);
+    if (result.ok) {
+      mssrpBankTableCache.payroll = table;
+      return result;
+    }
+  }
+  return { ok:false, table:null, rows:[], userRows:[], error:new Error('Ingen payroll-tabell hittades.') };
+}
+
+async function adminFindAccountsTable() {
+  const cached = mssrpBankTableCache.accounts;
+  if (cached) {
+    const test = await bankReadCandidate(cached, null);
+    if (test.ok) return test;
+    delete mssrpBankTableCache.accounts;
+  }
+  for (const table of MSSRP_BANK_TABLES.accounts) {
+    const result = await bankReadCandidate(table, null);
+    if (result.ok) {
+      mssrpBankTableCache.accounts = table;
+      return result;
+    }
+  }
+  return { ok:false, table:null, rows:[], userRows:[], error:new Error('Ingen bankkonto-tabell hittades.') };
+}
+
+async function adminFindTransactionsTable() {
+  const cached = mssrpBankTableCache.transactions;
+  if (cached) {
+    const test = await bankReadCandidate(cached, null);
+    if (test.ok) return test;
+    delete mssrpBankTableCache.transactions;
+  }
+  for (const table of MSSRP_BANK_TABLES.transactions) {
+    const result = await bankReadCandidate(table, null);
+    if (result.ok) {
+      mssrpBankTableCache.transactions = table;
+      return result;
+    }
+  }
+  return { ok:false, table:null, rows:[], userRows:[], error:new Error('Ingen transaktionstabell hittades.') };
+}
+
+async function adminSetUserCash(userId, amount, description='Admin bankinsättning') {
+  if (!hasPermission('admin')) throw new Error('Adminbehörighet krävs.');
+  if (!userId) throw new Error('Ingen användare vald.');
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value === 0) throw new Error('Ange ett giltigt belopp.');
+
+  const accounts = await adminFindAccountsTable();
+  if (!accounts.ok || !accounts.table) throw accounts.error || new Error('Bankkontotabellen kunde inte hittas.');
+
+  const rows = accounts.rows || [];
+  let account = rows.find(row => bankMatchesUser(row, userId));
+  let balanceKey = account ? ['balance','current_balance','available_balance','saldo','amount'].find(k => Object.prototype.hasOwnProperty.call(account,k)) : 'balance';
+
+  if (!account) {
+    const payload = {
+      user_id: userId,
+      balance: value,
+      account_number: `MSSRP-${String(userId).replace(/-/g,'').slice(0,10)}`
+    };
+    let result = await supabase.from(accounts.table).insert(payload).select('*').single();
+    if (result.error) {
+      // Try the smaller payload for schemas without account_number.
+      result = await supabase.from(accounts.table).insert({ user_id:userId, balance:value }).select('*').single();
+    }
+    if (result.error) throw result.error;
+    account = result.data;
+  } else {
+    const current = Number(bankFirstValue(account,['balance','current_balance','available_balance','saldo','amount'],0)) || 0;
+    balanceKey = balanceKey || 'balance';
+    const patch = { [balanceKey]: current + value };
+    const { error } = await supabase.from(accounts.table).update(patch).eq('id', account.id);
+    if (error) throw error;
+  }
+
+  // Record the movement when the optional transaction table is available.
+  const transactions = await adminFindTransactionsTable();
+  if (transactions.ok && transactions.table) {
+    const accountId = account?.id || null;
+    const payload = {
+      user_id:userId,
+      account_id:accountId,
+      amount:value,
+      description,
+      type:value >= 0 ? 'deposit' : 'withdrawal'
+    };
+    const tx = await supabase.from(transactions.table).insert(payload);
+    if (tx.error) {
+      // Some schemas do not have type/account_id. Do not undo a successful bank balance change.
+      const fallback = await supabase.from(transactions.table).insert({ user_id:userId, amount:value, description });
+      if (fallback.error) console.warn('Transaction log failed:', fallback.error);
+    }
+  }
+
+  return true;
+}
+
+async function adminUpsertPayroll(userId, roleName, salary) {
+  if (!hasPermission('admin')) throw new Error('Adminbehörighet krävs.');
+  const tableResult = await adminFindPayrollTable();
+  if (!tableResult.ok || !tableResult.table) throw tableResult.error || new Error('Ingen payroll-tabell hittades.');
+  const table = tableResult.table;
+  const existing = (tableResult.rows || []).find(row => bankMatchesUser(row,userId));
+  const salaryValue = Number(salary);
+  if (!Number.isFinite(salaryValue) || salaryValue < 0) throw new Error('Ogiltig lön.');
+
+  if (existing?.id) {
+    const roleKey = ['role_name','payroll_role','salary_class','pay_class','loneklass','role'].find(k => Object.prototype.hasOwnProperty.call(existing,k)) || 'role_name';
+    const salaryKey = ['daily_salary','daily_pay','salary','paycheck','amount','lön','lon'].find(k => Object.prototype.hasOwnProperty.call(existing,k)) || 'daily_salary';
+    const { error } = await supabase.from(table).update({ [roleKey]:roleName, [salaryKey]:salaryValue }).eq('id',existing.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from(table).insert({ user_id:userId, role_name:roleName, daily_salary:salaryValue });
+    if (error) throw error;
+  }
+}
+
+async function loadAdminPayroll() {
+  const roleBox = $('#admin-payroll-roles');
+  const userBody = $('#admin-payroll-users');
+  if (!roleBox || !userBody || !hasPermission('admin')) return;
+
+  roleBox.innerHTML = mssrpPayrollRoleCatalog().map(role => `
+    <button type="button" class="mssrp-card" data-payroll-role="${payrollEscape(role.name)}" data-payroll-salary="${role.salary}">
+      <strong>${payrollEscape(role.name)}</strong><small>${formatBankSEK(role.salary)} / dag</small>
+    </button>`).join('');
+
+  try {
+    const search = ($('#admin-payroll-search')?.value || '').trim().toLowerCase();
+    const [{data:profiles,error:profileError}, payrollResult] = await Promise.all([
+      supabase.from('profiles').select('id,display_name').order('display_name'),
+      adminFindPayrollTable()
+    ]);
+    if (profileError) throw profileError;
+    const payrollRows = payrollResult.ok ? (payrollResult.rows || []) : [];
+    const filtered = (profiles || []).filter(p => `${p.display_name||''} ${p.id}`.toLowerCase().includes(search));
+    userBody.innerHTML = filtered.map(user => {
+      const row = payrollRows.find(r => bankMatchesUser(r,user.id));
+      const role = bankFirstValue(row,['role_name','payroll_role','salary_class','pay_class','loneklass','role'],'Civil');
+      const salary = bankFirstValue(row,['daily_salary','daily_pay','salary','paycheck','amount','lön','lon'],0);
+      return `<tr><td><strong>${payrollEscape(user.display_name||'Okänd')}</strong><small>${payrollEscape(user.id)}</small></td><td>${payrollEscape(role)}</td><td>${escapeHtml(formatBankSEK(salary))}</td><td><div class="mssrp-admin-assign"><button type="button" class="mssrp-secondary" data-payroll-user="${user.id}">Välj</button><button type="button" class="mssrp-primary" data-admin-cash-user="${user.id}">Sätt in cash</button><button type="button" class="mssrp-secondary" data-pay-cash-user="${user.id}" data-pay-cash-amount="${Number(salary)||0}">Betala lön</button></div></td></tr>`;
+    }).join('') || '<tr><td colspan="4">Inga användare hittades.</td></tr>';
+
+    $$('#admin-payroll-roles [data-payroll-role]').forEach(button => button.addEventListener('click', async () => {
+      const selectedUser = window.__mssrpSelectedPayrollUser;
+      if (!selectedUser) { toast('Välj en användare först.'); return; }
+      try {
+        await adminUpsertPayroll(selectedUser, button.dataset.payrollRole, button.dataset.payrollSalary);
+        toast(`${button.dataset.payrollRole} tilldelad.`);
+        await loadAdminPayroll();
+        await loadMssrpBank();
+      } catch(error) { console.error(error); toast(error.message || 'Kunde inte tilldela löneklass.'); }
+    }));
+
+    $$('#admin-payroll-users [data-payroll-user]').forEach(button => button.addEventListener('click', () => {
+      window.__mssrpSelectedPayrollUser = button.dataset.payrollUser;
+      $$('#admin-payroll-users tr').forEach(tr => tr.classList.remove('is-selected'));
+      button.closest('tr')?.classList.add('is-selected');
+      toast('Användare vald. Välj en löneklass ovan.');
+    }));
+
+    $$('#admin-payroll-users [data-admin-cash-user]').forEach(button => button.addEventListener('click', async () => {
+      const userId = button.dataset.adminCashUser;
+      const raw = window.prompt('Hur mycket SEK ska sättas in på användarens bankkonto?');
+      if (raw === null) return;
+      const amount = Number(String(raw).replace(',', '.'));
+      if (!Number.isFinite(amount) || amount === 0) { toast('Ange ett giltigt belopp.'); return; }
+      try {
+        await adminSetUserCash(userId, amount, 'Admin bankinsättning');
+        toast(`${formatBankSEK(amount)} insatt på kontot.`);
+        await loadAdminPayroll();
+      } catch(error) { console.error(error); toast(error.message || 'Kunde inte sätta in pengar.'); }
+    }));
+
+    $$('#admin-payroll-users [data-pay-cash-user]').forEach(button => button.addEventListener('click', async () => {
+      const userId = button.dataset.payCashUser;
+      const amount = Number(button.dataset.payCashAmount || 0);
+      if (!amount) { toast('Användaren har ingen daglig lön tilldelad.'); return; }
+      try {
+        await adminSetUserCash(userId, amount, 'Daglig RP-lön');
+        toast(`Lön på ${formatBankSEK(amount)} utbetald.`);
+        await loadAdminPayroll();
+      } catch(error) { console.error(error); toast(error.message || 'Kunde inte betala lön.'); }
+    }));
+  } catch(error) {
+    console.error('Admin payroll failed:',error);
+    userBody.innerHTML = `<tr><td colspan="4">Kunde inte ladda löner: ${payrollEscape(error.message || 'Okänt fel')}</td></tr>`;
+  }
+}
+
+function bindAdminPayrollEvents() {
+  $('#admin-payroll-search')?.addEventListener('input', () => loadAdminPayroll());
 }
 
 
