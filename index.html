@@ -113,10 +113,8 @@
         <nav class="mssrp-nav" aria-label="Huvudmeny">
           <a href="#home" data-home>Hem</a>
           <a href="#shop">Shop</a>
+          <a href="#bank" data-bank-nav>Bank</a>
           <a href="#services">Funktioner</a>
-          <a href="#police" data-feature="police_database">Polisdatabas</a>
-          <a href="#dispatch" data-feature="dispatch">Dispatch</a>
-          <a href="#112" data-feature="call_112">Larmtelefon</a>
           <a href="#roleplay" data-feature="roleplay_system">Rollspelssystem</a>
           <a href="#tactical" data-feature="tactical_plan">Taktisk plan</a>
           <a href="#roblox" data-feature="roblox_integration">Roblox</a>
@@ -142,10 +140,9 @@
           <div>
             <div class="mssrp-kicker">MALMÖ SKÅNE SWEDEN ROLEPLAY</div>
             <h1>Välkommen till MSSRP</h1>
-            <p>En samlad portal för rollspel, larm, polisarbete, operativ planering och Roblox-integration.</p>
+            <p>En samlad portal för rollspel, operativ planering och Roblox-integration.</p>
             <div class="mssrp-hero-actions">
               <button class="mssrp-primary" id="btn-login-hero">Logga in</button>
-              <button class="mssrp-secondary" data-feature="call_112">Larmtelefon</button>
             </div>
           </div>
           <div class="mssrp-hero-status">
@@ -173,19 +170,7 @@
           <h2>Systemets funktioner</h2>
         </div>
         <div class="mssrp-card-grid">
-          <button class="mssrp-card" data-feature="call_112">
-            <span class="mssrp-card-icon danger">☎</span>
-            <span><strong>Larmtelefon</strong><small>Skicka ett 112-ärende till Dispatch.</small></span>
-          </button>
-          <button class="mssrp-card" data-feature="police_database">
-            <span class="mssrp-card-icon">▣</span>
-            <span><strong>Polisdatabas</strong><small>Endast roller med police_database får åtkomst.</small></span>
-          </button>
-          <button class="mssrp-card" data-feature="dispatch">
-            <span class="mssrp-card-icon">◉</span>
-            <span><strong>Dispatch</strong><small>Hantera larm, enheter och operativa ärenden.</small></span>
-          </button>
-          <button class="mssrp-card" data-feature="roleplay_system">
+<button class="mssrp-card" data-feature="roleplay_system">
             <span class="mssrp-card-icon">▤</span>
             <span><strong>Rollspelssystem</strong><small>Krimvapen, Fastigheter och Folkbokföring.</small></span>
           </button>
@@ -200,95 +185,28 @@
         </div>
       </section>
 
-      <section class="mssrp-section mssrp-portal-section mssrp-portal-page" id="police" data-portal-page="police" data-feature-section="police_database">
-        <div class="mssrp-section-title split">
-          <div><div class="mssrp-kicker">POLIS</div><h2>Polisdatabas</h2><p>Skyddad åtkomst — endast användare med rätt behörighet ser denna flik.</p></div>
-          <span class="mssrp-access-badge">POLICE DATABASE</span>
-        </div>
-        <div class="mssrp-info-card">
-          <strong>Polisregister</strong>
-          <p>Sök och hantera polisregister. Den faktiska åtkomsten kontrolleras även av Supabase RLS.</p>
-          <div class="mssrp-police-tools">
-            <div class="mssrp-police-tool">
-              <div class="mssrp-mini-card"><b>Personer</b><span>Sök i polisregister</span></div>
-              <form id="police-person-search-form" class="mssrp-search-form">
-                <input id="police-person-search" type="search" placeholder="Sök namn eller användar-ID…" autocomplete="off">
-                <button class="mssrp-primary" type="submit">Sök</button>
-              </form>
-              <div id="police-person-results" class="mssrp-list"><span>Skriv ett namn eller ID och tryck Sök.</span></div>
-            </div>
-            <div class="mssrp-police-tool">
-              <div class="mssrp-mini-card"><b>Ärenden</b><span>Visa kopplade registerposter</span></div>
-              <button id="police-load-cases" class="mssrp-secondary" type="button">Visa ärenden</button>
-              <div id="police-case-results" class="mssrp-list"><span>Tryck på knappen för att läsa ärenden.</span></div>
-            </div>
-            <div class="mssrp-police-tool">
-              <div class="mssrp-mini-card"><b>Ny post</b><span>Skapa en registrering</span></div>
-              <button id="police-new-post" class="mssrp-primary" type="button">Skapa ny post</button>
-            </div>
+      
+
+      
+
+      
+
+      <section class="mssrp-section mssrp-portal-page mssrp-bank-page" id="bank" data-portal-page="bank">
+        <div class="mssrp-bank-shell">
+          <div class="mssrp-bank-topbar">
+            <div class="mssrp-bank-brand"><span class="mssrp-bank-mark">M</span><div><strong>MSSRP BANK</strong><small>PERSONLIG BANK • ROLLSPEL</small></div></div>
+            <div class="mssrp-bank-user"><span class="mssrp-bank-online-dot"></span><span id="bank-user-name">—</span></div>
           </div>
-        </div>
-      </section>
-
-      <section class="mssrp-section dark mssrp-portal-section mssrp-portal-page" id="dispatch" data-portal-page="dispatch" data-feature-section="dispatch">
-        <div class="mssrp-section-title split">
-          <div><div class="mssrp-kicker">CAD / OPERATIV LEDNING</div><h2>Dispatch</h2><p>Central för larm, enheter och pågående insatser.</p></div>
-          <span class="mssrp-access-badge">CAD SYSTEM</span>
-        </div>
-
-        <div class="cad-dashboard">
-          <div class="cad-topbar">
-            <div><span class="cad-live-dot"></span><strong>LIVE DISPATCH</strong><small id="dispatch-last-update">Uppdateras automatiskt</small></div>
-            <div class="cad-metrics"><span><b id="dispatch-active-count">0</b> AKTIVA</span><span><b id="dispatch-unit-count">0</b> ENHETER</span><span><b id="dispatch-assigned-count">0</b> TILLDELADE</span></div>
+          <div class="mssrp-bank-notice">Detta är en fiktiv banktjänst för MSSRP-rollspel och är inte kopplad till någon riktig bank.</div>
+          <div class="mssrp-bank-hero">
+            <div><span class="mssrp-bank-eyebrow">ÖVERSIKT</span><h2>Välkommen tillbaka</h2><p id="bank-role-line">Löneklass hämtas…</p></div>
+            <div class="mssrp-bank-balance"><span>DISPONIBELT SALDO</span><strong id="bank-balance">—</strong><small>SEK</small></div>
           </div>
-
-          <div class="cad-layout">
-            <div class="cad-panel cad-calls-panel">
-              <div class="cad-panel-head"><div><span class="cad-label">CALL QUEUE</span><h3>Aktiva larm</h3></div><button id="dispatch-refresh" class="mssrp-secondary" type="button">↻ Uppdatera</button></div>
-              <div id="dispatch-calls-list" class="cad-call-list"><div class="cad-empty">Hämtar larm…</div></div>
-            </div>
-
-            <aside class="cad-panel cad-units-panel">
-              <div class="cad-panel-head"><div><span class="cad-label">UNIT STATUS</span><h3>Enheter</h3></div></div>
-              <div id="dispatch-units-list" class="cad-unit-list"><div class="cad-empty">Hämtar enheter…</div></div>
-            </aside>
+          <div class="mssrp-bank-grid">
+            <div class="mssrp-bank-card mssrp-bank-pay-card"><div class="mssrp-bank-card-head"><span>DIN LÖN</span><span class="mssrp-bank-pill" id="bank-payroll-role">—</span></div><strong id="bank-paycheck">—</strong><small>daglig RP-lön</small><div class="mssrp-bank-meta"><span>Nästa lön</span><b id="bank-next-payday">—</b></div></div>
+            <div class="mssrp-bank-card"><div class="mssrp-bank-card-head"><span>KONTO</span><span class="mssrp-bank-account-no" id="bank-account-number">—</span></div><h3>Personkonto</h3><p>Kontot används för dina MSSRP-betalningar och löneinsättningar.</p><div class="mssrp-bank-meta"><span>Kontostatus</span><b>Aktivt</b></div></div>
           </div>
-        </div>
-
-        <div class="mssrp-info-card dispatch-duty-card">
-          <div class="mssrp-section-title split compact-title">
-            <div><div class="mssrp-kicker">Tjänstestatus</div><h3>Min enhet</h3><p>Skapa en CAD-enhet för att kunna ta emot och hantera larm.</p></div>
-            <span id="duty-status-badge" class="mssrp-access-badge">EJ I TJÄNST</span>
-          </div>
-          <form id="duty-form" class="mssrp-portal-form inline-form">
-            <label>Enhetsnummer<input id="duty-callsign" required maxlength="20" placeholder="T.ex. 21-12"></label>
-            <label>Enhetstyp<select id="duty-unit-type"><option value="patrol">Patrull</option><option value="command">Befäl</option><option value="fri">FRI</option><option value="ni">NI</option><option value="dispatcher">Dispatcher</option></select></label>
-            <button class="mssrp-primary" type="submit">Gå i tjänst</button>
-            <button id="duty-off-btn" class="mssrp-secondary" type="button" disabled>Gå ur tjänst</button>
-          </form>
-          <div id="duty-current" class="mssrp-status-row"></div>
-        </div>
-      </section>
-
-      <section class="mssrp-section mssrp-portal-section mssrp-portal-page" id="112" data-portal-page="112" data-feature-section="call_112">
-        <div class="mssrp-section-title"><div class="mssrp-kicker">LARM</div><h2>Larmtelefon 112</h2><p>Skapa ett larm som kan tas emot av Dispatch.</p></div>
-        <div class="mssrp-info-card">
-          <form id="portal-112-form" class="mssrp-portal-form">
-            <div class="mssrp-form-grid-2">
-              <label>Roblox-användarnamn<input id="portal-112-roblox" required maxlength="50" placeholder="Ditt Roblox-namn"></label>
-              <label>Discord-användarnamn<input id="portal-112-discord" maxlength="80" placeholder="Ditt Discord-namn"></label>
-              <label>Stadsdel<input id="portal-112-district" maxlength="80" placeholder="T.ex. Centrum"></label>
-              <label>Plats<input id="portal-112-location" required maxlength="160" placeholder="Plats för händelsen"></label>
-              <label>Postnummer<input id="portal-112-postcode" maxlength="20" placeholder="T.ex. 211 20"></label>
-            </div>
-            <label>Vilka lagar/bestämmelser har överträtts?<textarea id="portal-112-violations" required maxlength="1200" rows="4" placeholder="Skriv vilka lagar eller bestämmelser som misstänks ha överträtts..."></textarea></label>
-            <label>Beskrivning<textarea id="portal-112-description" required maxlength="2000" rows="5" placeholder="Kort beskrivning av det inträffade"></textarea></label>
-            <div class="mssrp-form-grid-2">
-              <label>Enheter som behövs<select id="portal-112-units" multiple size="4"><option value="polis">Polis</option><option value="fri">Polis (FRI)</option><option value="brand">Brand</option><option value="ambulans">Ambulans</option><option value="ovrigt">Övrigt</option></select></label>
-              <label>Prioritet<select id="portal-112-priority"><option value="1">Prio 1 – Akut</option><option value="2">Prio 2 – Brådskande</option><option value="3" selected>Prio 3 – Normal</option></select></label>
-            </div>
-            <button class="mssrp-primary" type="submit">Skicka 112-larm</button>
-          </form>
+          <div class="mssrp-bank-transactions"><div class="mssrp-bank-section-head"><div><span class="mssrp-bank-eyebrow">TRANSAKTIONER</span><h3>Senaste händelser</h3></div><button class="mssrp-secondary" id="bank-refresh" type="button">Uppdatera</button></div><div id="bank-transactions-list" class="mssrp-bank-transaction-list"><div class="mssrp-bank-loading">Laddar bankhändelser…</div></div></div>
         </div>
       </section>
 
@@ -331,9 +249,7 @@
         <div class="mssrp-admin-stats">
           <div class="mssrp-mini-card"><b id="admin-stat-users">—</b><span>Användare</span></div>
           <div class="mssrp-mini-card"><b id="admin-stat-admins">—</b><span>Administratörer</span></div>
-          <div class="mssrp-mini-card"><b id="admin-stat-active-calls">—</b><span>Aktiva larm</span></div>
-          <div class="mssrp-mini-card"><b id="admin-stat-units">—</b><span>Enheter i tjänst</span></div>
-        </div>
+</div>
         <div class="mssrp-info-card">
           <div class="mssrp-kicker">ER:LC</div><h3>Servermeddelanden</h3>
           <p>Administratörer kan skicka servermeddelanden via den server-side ER:LC-integrationen.</p>
@@ -363,6 +279,13 @@
           <div class="mssrp-form-grid-2"><label>Roll<select id="admin-role-select"></select></label><div class="mssrp-status-row" id="admin-permission-status">Välj en roll.</div></div>
           <div id="admin-permission-list" class="mssrp-permission-grid"></div>
           <button id="admin-save-permissions" class="mssrp-primary" type="button">Spara rollbehörigheter</button>
+        </div>
+        <div class="mssrp-info-card mssrp-payroll-admin-card">
+          <div class="mssrp-kicker">LÖNER & PAYROLL</div>
+          <h3>RP-löneklasser</h3><p>Administratörer kan ändra daglig lön, tilldela löneklass och betala ut dagens lön till en användares MSSRP-bankkonto.</p>
+          <div id="admin-payroll-roles" class="mssrp-payroll-role-grid"></div>
+          <div class="mssrp-payroll-users-head"><span class="mssrp-kicker">ANVÄNDARES LÖNEKLASSER</span><input id="admin-payroll-search" class="mssrp-admin-search" placeholder="Sök användare…" autocomplete="off"></div>
+          <div class="mssrp-admin-table-wrap"><table class="mssrp-admin-table"><thead><tr><th>Användare</th><th>Löneklass</th><th>Daglig lön</th><th>Åtgärd</th></tr></thead><tbody id="admin-payroll-users"><tr><td colspan="4">Laddar…</td></tr></tbody></table></div>
         </div>
         <div class="mssrp-info-card">
           <div class="mssrp-kicker">SERVERSTATUS</div>
@@ -2366,7 +2289,5 @@
 </body>
 </html>
 <style>
-#police-person-search, #police-person-search-form input { color:#000 !important; background:#fff !important; }
-#police-person-search::placeholder { color:#666 !important; }
 .cad-priority { font-weight:800; }
 </style>
