@@ -23,7 +23,6 @@ const erlc = process.env.ERLC_SERVER_KEY
   ? new ErlcClient({ serverKey: process.env.ERLC_SERVER_KEY })
   : null;
 
-const pollMs = Math.max(3000, Number(process.env.ERLC_POLL_MS || 5000));
 
 function bearer(req) {
   const value = req.headers.authorization || '';
@@ -109,63 +108,150 @@ app.post('/api/erlc/pm', async (req, res) => {
   }
 });
 
-app.post('/api/dispatch/on-duty', async (req, res) => {
-  const user = await requireUser(req, res, 'dispatch');
-  if (!user || res.headersSent) return;
-  const callsign = String(req.body?.callsign || '').trim();
-  const unitType = String(req.body?.unitType || 'patrol').trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{1,19}$/.test(callsign)) return res.status(400).json({ error: 'Ange ett giltigt enhetsnummer.' });
 
-  const { data: existing } = await supabaseAdmin.from('dispatch_units').select('id').eq('user_id', user.id).limit(1);
-  if (existing?.length) return res.status(409).json({ error: 'Du har redan en aktiv enhet.' });
 
-  const { data, error } = await supabaseAdmin.from('dispatch_units').insert({
-    callsign, unit_type: unitType, status: 'available', user_id: user.id
-  }).select().single();
-  if (error) return res.status(400).json({ error: error.message });
-  res.json({ ok: true, unit: data });
-});
+function nextDailyPayday() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCDate(next.getUTCDate() + 1);
+  next.setUTCHours(0, 0, 0, 0);
+  return next.toISOString();
+}
 
-app.post('/api/dispatch/off-duty', async (req, res) => {
-  const user = await requireUser(req, res, 'dispatch');
-  if (!user || res.headersSent) return;
-  const { error } = await supabaseAdmin.from('dispatch_units').delete().eq('user_id', user.id);
-  if (error) return res.status(400).json({ error: error.message });
-  res.json({ ok: true });
-});
+function todayUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-async function syncEmergencyCalls() {
-  if (!erlc) return;
+async function ensureBankAccount(userId) {
+  let { data: account, error } = await supabaseAdmin
+    .from('bank_accounts')
+    .select('id,account_number,balance')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!account) {
+    const accountNumber = `MSSRP-${String(userId).replace(/-/g,'').slice(0,4).toUpperCase()}-${Math.floor(100000+Math.random()*900000)}`;
+    const created = await supabaseAdmin.from('bank_accounts')
+      .insert({user_id:userId,account_number:accountNumber,balance:0})
+      .select('id,account_number,balance').single();
+    if (created.error) throw created.error;
+    account = created.data;
+  }
+  return account;
+}
+
+async function payUserDaily(userId, paidBy = 'system') {
+  const {data:assignment,error:assignmentError} = await supabaseAdmin
+    .from('user_payroll_roles')
+    .select('payroll_role_id,last_paid_on,payroll_roles(id,name,monthly_salary)')
+    .eq('user_id',userId).maybeSingle();
+  if (assignmentError) throw assignmentError;
+  const role = assignment?.payroll_roles;
+  const amount = Number(role?.monthly_salary || 0);
+  if (!assignment || !role || amount <= 0) return {paid:false,reason:'no_role'};
+  const today = todayUtc();
+  if (assignment.last_paid_on === today) return {paid:false,reason:'already_paid'};
+
+  const account = await ensureBankAccount(userId);
+  const newBalance = Number(account.balance || 0) + amount;
+  const upd = await supabaseAdmin.from('bank_accounts')
+    .update({balance:newBalance,updated_at:new Date().toISOString()})
+    .eq('id',account.id);
+  if (upd.error) throw upd.error;
+
+  const tx = await supabaseAdmin.from('bank_transactions').insert({
+    account_id:account.id,
+    amount,
+    description:`Daglig lön · ${role.name}`,
+    metadata:{paid_by:paidBy,payroll_role:role.name,pay_date:today,type:'daily_payroll'}
+  });
+  if (tx.error) throw tx.error;
+
+  const mark = await supabaseAdmin.from('user_payroll_roles')
+    .update({last_paid_on:today,updated_at:new Date().toISOString()})
+    .eq('user_id',userId).is('last_paid_on', assignment.last_paid_on);
+  if (mark.error) throw mark.error;
+  return {paid:true,amount,balance:newBalance,role:role.name};
+}
+
+async function runDailyPayroll() {
   try {
-    const calls = await erlc.server.emergencyCalls();
-    for (const call of calls || []) {
-      const externalId = String(call.Id ?? call.id ?? call.CallId ?? call.callId ?? `${call.Timestamp ?? call.timestamp ?? Date.now()}-${call.Caller ?? call.caller ?? 'unknown'}`);
-      const location = String(call.Location ?? call.location ?? call.Address ?? call.address ?? 'ER:LC');
-      const description = String(call.Description ?? call.description ?? call.Message ?? call.message ?? '112-larm från ER:LC');
-      const callerName = String(call.Caller ?? call.caller ?? call.CallerName ?? call.callerName ?? 'Okänd');
-      const priority = Number(call.Priority ?? call.priority ?? 3);
-      await supabaseAdmin.from('dispatch_calls').upsert({
-        caller_id: null,
-        source: 'erlc',
-        erlc_external_id: externalId,
-        caller_name: callerName,
-        location,
-        description,
-        priority: Math.min(5, Math.max(1, priority)),
-        status: 'new',
-        raw_payload: call,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'erlc_external_id' });
+    const {data:users,error} = await supabaseAdmin.from('user_payroll_roles').select('user_id');
+    if (error) throw error;
+    for (const row of users || []) {
+      try { await payUserDaily(row.user_id, 'system'); }
+      catch (error) { console.error(`Daily payroll failed for ${row.user_id}:`, error); }
     }
   } catch (error) {
-    console.error('ER:LC emergency sync failed:', error?.message || error);
+    console.error('Daily payroll scan failed:', error);
   }
 }
 
-setInterval(syncEmergencyCalls, pollMs);
-syncEmergencyCalls();
+app.get('/api/bank/account', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user || res.headersSent) return;
+  try {
+    const { data: profile } = await supabaseAdmin.from('profiles').select('display_name').eq('id', user.id).maybeSingle();
+    const { data: payroll } = await supabaseAdmin.from('user_payroll_roles').select('payroll_role_id, payroll_roles(id,name,monthly_salary,description)').eq('user_id', user.id).maybeSingle();
+    let { data: account, error: accountError } = await supabaseAdmin.from('bank_accounts').select('id,account_number,balance').eq('user_id', user.id).maybeSingle();
+    if (accountError) throw accountError;
+    if (!account) {
+      const accountNumber = `MSSRP-${String(user.id).replace(/-/g,'').slice(0,4).toUpperCase()}-${Math.floor(100000+Math.random()*900000)}`;
+      const created = await supabaseAdmin.from('bank_accounts').insert({user_id:user.id,account_number:accountNumber,balance:0}).select('id,account_number,balance').single();
+      if (created.error) throw created.error;
+      account = created.data;
+    }
+    const { data: transactions, error: txError } = await supabaseAdmin.from('bank_transactions').select('id,amount,description,created_at').eq('account_id', account.id).order('created_at',{ascending:false}).limit(25);
+    if (txError) throw txError;
+    const pr = payroll?.payroll_roles || null;
+    res.json({profile, account, payroll:{role_name:pr?.name || null, monthly_salary:Number(pr?.monthly_salary || 0), next_payday:nextDailyPayday()}, transactions:transactions||[]});
+  } catch (error) { console.error(error); res.status(500).json({error:error?.message||'Kunde inte läsa bankkontot.'}); }
+});
 
-app.listen(Number(process.env.PORT || 3000), () => {
+app.get('/api/admin/payroll', async (req, res) => {
+  const user = await requireUser(req, res, 'admin');
+  if (!user || res.headersSent) return;
+  try {
+    const [{data:roles,error:roleError},{data:users,error:userError}] = await Promise.all([
+      supabaseAdmin.from('payroll_roles').select('id,name,description,monthly_salary,sort_order').order('sort_order'),
+      supabaseAdmin.from('profiles').select('id,display_name,user_payroll_roles(payroll_role_id,payroll_roles(id,name,monthly_salary))').order('display_name')
+    ]);
+    if (roleError) throw roleError; if (userError) throw userError;
+    const mapped=(users||[]).map(u=>{const pr=u.user_payroll_roles?.[0]?.payroll_roles;return {id:u.id,display_name:u.display_name,payroll_role_id:pr?.id||null,monthly_salary:Number(pr?.monthly_salary||0)};});
+    res.json({roles:roles||[],users:mapped});
+  } catch(error){console.error(error);res.status(500).json({error:error?.message||'Kunde inte läsa payroll.'});}
+});
+
+app.put('/api/admin/payroll/roles/:id', async (req,res)=>{
+  const user=await requireUser(req,res,'admin'); if(!user||res.headersSent)return;
+  const salary=Number(req.body?.monthly_salary); if(!Number.isFinite(salary)||salary<0||salary>10000000)return res.status(400).json({error:'Ogiltig månadslön.'});
+  const {data,error}=await supabaseAdmin.from('payroll_roles').update({monthly_salary:Math.round(salary),updated_at:new Date().toISOString()}).eq('id',req.params.id).select('id,name,monthly_salary').single();
+  if(error)return res.status(400).json({error:error.message}); res.json({ok:true,role:data});
+});
+
+app.post('/api/admin/payroll/assign', async (req,res)=>{
+  const user=await requireUser(req,res,'admin'); if(!user||res.headersSent)return;
+  const userId=String(req.body?.user_id||''); const roleId=String(req.body?.payroll_role_id||'');
+  if(!userId||!roleId)return res.status(400).json({error:'Användare eller löneklass saknas.'});
+  const {error}=await supabaseAdmin.from('user_payroll_roles').upsert({user_id:userId,payroll_role_id:roleId,updated_at:new Date().toISOString()},{onConflict:'user_id'});
+  if(error)return res.status(400).json({error:error.message}); res.json({ok:true});
+});
+
+app.post('/api/admin/payroll/pay', async (req,res)=>{
+  const admin=await requireUser(req,res,'admin'); if(!admin||res.headersSent)return;
+  const userId=String(req.body?.user_id||''); if(!userId)return res.status(400).json({error:'Användare saknas.'});
+  try {
+    const result = await payUserDaily(userId, admin.id);
+    if (!result.paid && result.reason === 'already_paid') return res.status(409).json({error:'Lönen är redan utbetald idag.'});
+    if (!result.paid) return res.status(400).json({error:'Användaren har ingen aktiv löneklass.'});
+    res.json({ok:true,...result});
+  } catch(error){console.error(error);res.status(500).json({error:error?.message||'Löneutbetalningen misslyckades.'});}
+});
+
+
+app.listen(Number(process.env.PORT || 3000), async () => {
   console.log(`MSSRP backend listening on ${process.env.PORT || 3000}`);
+  await runDailyPayroll();
+  setInterval(runDailyPayroll, 60 * 60 * 1000);
   if (!erlc) console.warn('ER:LC_SERVER_KEY is not configured; ER:LC commands/sync are disabled.');
 });
