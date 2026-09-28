@@ -14,19 +14,6 @@ const SUPABASE_ANON_KEY =
 
 const MSSRP_API_BASE = window.MSSRP_API_BASE || '/api';
 
-const PAYROLL_ROLE_NAMES = {
-  trainee: 'Lön1',
-  junior: 'Lön2',
-  employee: 'Lön3',
-  assistant: 'Lön4',
-  inspector: 'Lön5',
-  detective: 'Lön6',
-  field_supervisor: 'Lön7',
-  group_manager: 'Lön8',
-  operations_manager: 'Lön9',
-  director: 'Lön10'
-};
-
 const supabase =
   window.supabase.createClient(
     SUPABASE_URL,
@@ -2047,8 +2034,8 @@ async function loadAccessProfile() {
     await loadAdminUsers();
     await loadAdminPermissions();
     await loadAdminStats();
-    await loadAdminPayroll();
   }
+  startDispatchPolling();
 }
 
 function updatePortalAccess() {
@@ -2223,7 +2210,11 @@ async function saveAdminPermissions() {
 async function loadAdminStats() {
   if (!hasPermission('admin')) return;
   try {
-    const { count: users } = await supabase.from('profiles').select('id', { count:'exact', head:true });
+    const [{ count: users }, { count: activeCalls }, { count: units }] = await Promise.all([
+      supabase.from('profiles').select('id', { count:'exact', head:true }),
+      supabase.from('dispatch_calls').select('id', { count:'exact', head:true }).in('status', ['new','assigned','active']),
+      supabase.from('dispatch_units').select('id', { count:'exact', head:true }).neq('status', 'off-duty')
+    ]);
     if ($('#admin-stat-users')) $('#admin-stat-users').textContent = users ?? '0';
     if ($('#admin-stat-active-calls')) $('#admin-stat-active-calls').textContent = activeCalls ?? '0';
     if ($('#admin-stat-units')) $('#admin-stat-units').textContent = units ?? '0';
@@ -2248,126 +2239,168 @@ async function mssrpApi(path, options = {}) {
   return body;
 }
 
+let dispatchCallsCache = [];
+let dispatchUnitsCache = [];
+
+function formatCallAge(iso) {
+  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  return mins < 1 ? 'NU' : `${mins} MIN`;
+}
+
+function normalizeSwedishPriority(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 3;
+  return Math.min(3, Math.max(1, Math.round(n)));
+}
+
+function swedishPriorityLabel(value) {
+  const p = normalizeSwedishPriority(value);
+  return p === 1 ? 'Prio 1' : p === 2 ? 'Prio 2' : 'Prio 3';
+}
+
+function renderDispatchCalls(rows) {
+  dispatchCallsCache = rows || [];
+  const el = $('#dispatch-calls-list');
+  if (!el) return;
+  $('#dispatch-active-count') && ($('#dispatch-active-count').textContent = String(rows?.length || 0));
+  if (!rows?.length) { el.innerHTML = '<div class="cad-empty">Inga aktiva larm.</div>'; return; }
+  el.innerHTML = rows.map((call, i) => {
+    const p = normalizeSwedishPriority(call.priority);
+    const assigned = dispatchUnitsCache.filter(u => String(u.assigned_call_id) === String(call.id)).length;
+    return `<div class="cad-call" data-dispatch-call="${i}">
+      <div class="cad-priority p${p}">${swedishPriorityLabel(p)}</div>
+      <div class="cad-call-main"><strong>${escapeHtml(call.source === 'erlc' ? 'ER:LC 112' : 'MSSRP 112')} · #${escapeHtml(call.id)}</strong><span>${escapeHtml(call.location || 'Okänd plats')}</span><small>${escapeHtml(call.caller_name || 'Okänd')} · ${escapeHtml(call.description || 'Ingen beskrivning')}</small></div>
+      <div class="cad-call-meta">${formatCallAge(call.created_at)}<span class="cad-status">${assigned ? assigned+' ENH' : 'EJ TILLDELAD'}</span></div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-dispatch-call]').forEach(x => x.addEventListener('click', () => openDispatchCall(Number(x.dataset.dispatchCall))));
+}
+
+function renderDispatchUnits(rows) {
+  dispatchUnitsCache = rows || [];
+  const el = $('#dispatch-units-list');
+  if (!el) return;
+  const active = rows?.filter(x => x.status !== 'off-duty') || [];
+  $('#dispatch-unit-count') && ($('#dispatch-unit-count').textContent = String(active.length));
+  $('#dispatch-assigned-count') && ($('#dispatch-assigned-count').textContent = String(active.filter(x => x.assigned_call_id).length));
+  const visibleRows = active;
+  if (!visibleRows.length) { el.innerHTML = '<div class="cad-empty">Inga enheter i tjänst.</div>'; return; }
+  el.innerHTML = visibleRows.map(unit => `<div class="cad-unit"><div class="cad-unit-left"><span class="cad-unit-dot ${unit.status === 'assigned' ? 'busy' : unit.status === 'off-duty' ? 'off' : ''}"></span><div><strong>${escapeHtml(unit.callsign)}</strong><small>${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</small></div></div><span class="cad-assignment">${unit.assigned_call_id ? '#'+escapeHtml(unit.assigned_call_id) : 'LEDIG'}</span></div>`).join('');
+}
+
+function openDispatchCall(index) {
+  const call = dispatchCallsCache[index];
+  if (!call) return;
+  const title = $('#mssrp-tool-title'), eyebrow = $('#mssrp-tool-eyebrow'), body = $('#mssrp-tool-body');
+  if (title) title.textContent = `Larm #${call.id}`;
+  if (eyebrow) eyebrow.textContent = 'CAD · CALL DETAILS';
+  const assigned = dispatchUnitsCache.filter(u => String(u.assigned_call_id) === String(call.id));
+  const available = dispatchUnitsCache.filter(u => u.status !== 'off-duty');
+  body.innerHTML = `<div class="cad-detail-grid">
+    <div class="cad-detail"><small>Prioritet</small><strong>${swedishPriorityLabel(call.priority)}</strong></div>
+    <div class="cad-detail"><small>Status</small><strong>${escapeHtml(call.status || 'new')}</strong></div>
+    <div class="cad-detail"><small>Plats</small><strong>${escapeHtml(call.location || 'Okänd')}</strong></div>
+    <div class="cad-detail"><small>Anmälare</small><strong>${escapeHtml(call.caller_name || 'Okänd')}</strong></div>
+    <div class="cad-detail"><small>Registrerat</small><strong>${escapeHtml(new Date(call.created_at).toLocaleString('sv-SE'))}</strong></div>
+    <div class="cad-detail"><small>Källa</small><strong>${escapeHtml(call.source === 'erlc' ? 'ER:LC 112' : 'MSSRP 112')}</strong></div>
+  </div>
+  <div class="cad-detail"><small>Händelse / lagöverträdelser</small><strong>${escapeHtml(call.legal_violations || 'Ej angivet')}</strong><p>${escapeHtml(call.description || '')}</p></div>
+  <div class="cad-call-actions"><button id="cad-delete-call" class="mssrp-secondary" type="button">Ta bort larm</button></div>
+  <div class="cad-assign-box" style="margin-top:12px"><span class="cad-label">TILLDELA ENHET</span><div class="cad-assign-row"><select id="cad-unit-select"><option value="">Välj ledig enhet…</option>${available.filter(u => !u.assigned_call_id || assigned.some(a => a.id === u.id)).map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.callsign)} · ${escapeHtml(u.unit_type || 'Enhet')}</option>`).join('')}</select><button id="cad-assign-btn" class="mssrp-primary" type="button">Tilldela</button></div></div>
+  <div class="cad-call-actions">${assigned.length ? assigned.map(u => `<button class="mssrp-secondary" type="button" data-unassign-unit="${escapeHtml(u.id)}">Ta bort ${escapeHtml(u.callsign)}</button>`).join('') : '<span class="mssrp-status-row">Inga enheter är tilldelade.</span>'}</div>`;
+  $('#cad-delete-call')?.addEventListener('click', async () => {
+    if (!window.confirm(`Ta bort larm #${call.id}? Detta går inte att ångra.`)) return;
+
+    try {
+      // Frigör alla enheter som är kopplade till larmet
+      const { error: unitError } = await supabase
+        .from('dispatch_units')
+        .update({
+          assigned_call_id: null,
+          status: 'available'
+        })
+        .eq('assigned_call_id', call.id);
+
+      if (unitError) throw unitError;
+
+      // Markera larmet som borttaget. Dispatch-listan visar bara
+      // new, assigned och active, så larmet försvinner direkt.
+      const { error: callError } = await supabase
+        .from('dispatch_calls')
+        .update({ status: 'deleted' })
+        .eq('id', call.id);
+
+      if (callError) throw callError;
+
+      // Ta bort det direkt från cache/UI så användaren slipper vänta på polling.
+      dispatchCallsCache = (dispatchCallsCache || []).filter(c => c.id !== call.id);
+
+      closeModal('mssrp-tool-modal');
+      renderDispatchCalls(dispatchCallsCache);
+      toast(`Larm #${call.id} togs bort.`);
+
+      await refreshDispatchBoard();
+      await loadAdminStats();
+    } catch (e) {
+      console.error('Remove dispatch call failed:', e);
+      toast(e.message || 'Kunde inte ta bort larmet.');
+    }
+  });
+
+  $('#cad-assign-btn')?.addEventListener('click', async () => {
+    const unitId = $('#cad-unit-select')?.value;
+    if (!unitId) return toast('Välj en enhet.');
+    try {
+      const { error } = await supabase.from('dispatch_units').update({ assigned_call_id: call.id, status: 'assigned' }).eq('id', unitId);
+      if (error) throw error;
+      toast('Enheten tilldelades larmet.'); await refreshDispatchBoard(); openDispatchCall(dispatchCallsCache.findIndex(x => x.id === call.id));
+    } catch (e) { toast(e.message || 'Kunde inte tilldela enheten.'); }
+  });
+  body.querySelectorAll('[data-unassign-unit]').forEach(btn => btn.addEventListener('click', async () => {
+    try {
+      const { error } = await supabase.from('dispatch_units').update({ assigned_call_id: null, status: 'available' }).eq('id', btn.dataset.unassignUnit);
+      if (error) throw error;
+      toast('Enheten frigjordes.'); await refreshDispatchBoard(); openDispatchCall(dispatchCallsCache.findIndex(x => x.id === call.id));
+    } catch (e) { toast(e.message || 'Kunde inte frigöra enheten.'); }
+  }));
+  showModal('mssrp-tool-modal');
+}
+
+function updateDutyUI(unit) {
+  const badge = $('#duty-status-badge'), current = $('#duty-current'), off = $('#duty-off-btn'), form = $('#duty-form');
+  if (!badge || !current || !off || !form) return;
+  const onDuty = !!unit;
+  badge.textContent = onDuty ? `I TJÄNST · ${unit.callsign}` : 'EJ I TJÄNST';
+  current.innerHTML = onDuty ? `<span class="status-dot"></span><span>Enhet <strong>${escapeHtml(unit.callsign)}</strong> · ${escapeHtml(unit.unit_type || 'Enhet')} · ${escapeHtml(unit.status || 'available')}</span>` : '<span>Skapa ett enhetsnummer för att gå i tjänst.</span>';
+  off.disabled = !onDuty;
+  form.querySelectorAll('input,select,button[type="submit"]').forEach(el => { el.disabled = onDuty; });
+}
+
+async function refreshDispatchBoard() {
+  if (!hasPermission('dispatch')) return;
+  const [{ data: calls, error: callsError }, { data: units, error: unitsError }] = await Promise.all([
+    supabase.from('dispatch_calls').select('id,source,caller_name,location,description,legal_violations,status,priority,created_at').in('status', ['new','assigned','active']).order('created_at', { ascending: false }).limit(50),
+    supabase.from('dispatch_units').select('id,callsign,unit_type,status,user_id,assigned_call_id').order('callsign')
+  ]);
+  if (callsError) console.error('Dispatch calls:', callsError);
+  if (unitsError) console.error('Dispatch units:', unitsError);
+  renderDispatchUnits(units || []);
+  renderDispatchCalls(calls || []);
+  if ($('#dispatch-last-update')) $('#dispatch-last-update').textContent = `Senast ${new Date().toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+  updateDutyUI((units || []).find(x => x.user_id === currentUser?.id) || null);
+}
+
+function startDispatchPolling() {
+  clearInterval(window.__mssrpDispatchTimer);
+  if (!hasPermission('dispatch')) return;
+  refreshDispatchBoard();
+  window.__mssrpDispatchTimer = setInterval(refreshDispatchBoard, 5000);
+}
+
 async function sendErlcAdminCommand(path, payload) {
   const result = await mssrpApi(path, { method: 'POST', body: JSON.stringify(payload) });
   toast('ER:LC-kommandot skickades.');
   return result;
-}
-
-async function loadBankPage() {
-  if (!currentUser) {
-    navigateToPortalPage('home');
-    isLoginMode = true; updateAuthModal(); showModal('auth-modal');
-    return;
-  }
-
-  try {
-    // Use the Supabase RPCs directly so the bank keeps working even when
-    // the optional /api backend is not deployed or its route is stale.
-    const [accountRes, payrollRes, transactionsRes] = await Promise.all([
-      supabase.rpc('mssrp_get_bank_account'),
-      supabase.rpc('mssrp_get_my_payroll'),
-      supabase.rpc('mssrp_get_bank_transactions', { p_limit: 40 })
-    ]);
-    if (accountRes.error) throw accountRes.error;
-    if (payrollRes.error) throw payrollRes.error;
-    if (transactionsRes.error) throw transactionsRes.error;
-
-    const account = accountRes.data || {};
-    const payroll = payrollRes.data || {};
-    const profileName = currentUser.user_metadata?.display_name || currentUser.user_metadata?.full_name || currentUser.email || 'Användare';
-    const roleName = payroll.class_name || 'Ingen löneklass';
-
-    $('#bank-user-name') && ($('#bank-user-name').textContent = profileName);
-    $('#bank-role-line') && ($('#bank-role-line').textContent = `${roleName} · Swedbank RP`);
-    $('#bank-balance') && ($('#bank-balance').textContent = Number(account.balance || 0).toLocaleString('sv-SE', {minimumFractionDigits:2, maximumFractionDigits:2}));
-    $('#bank-payroll-role') && ($('#bank-payroll-role').textContent = roleName);
-    $('#bank-paycheck') && ($('#bank-paycheck').textContent = `${Number(payroll.daily_pay || 0).toLocaleString('sv-SE')} kr`);
-    $('#bank-account-number') && ($('#bank-account-number').textContent = account.account_number || '—');
-    $('#bank-next-payday') && ($('#bank-next-payday').textContent = payroll.next_pay_at ? new Date(payroll.next_pay_at).toLocaleString('sv-SE') : 'Tillgänglig');
-
-    const list = $('#bank-transactions-list');
-    const transactions = Array.isArray(transactionsRes.data) ? transactionsRes.data : [];
-    if (list) list.innerHTML = transactions.length ? transactions.map(t => {
-      const amount = Number(t.amount || 0); const positive = amount >= 0;
-      return `<div class="mssrp-bank-transaction"><div class="mssrp-bank-transaction-icon">${positive ? '↓' : '↑'}</div><div><strong>${escapeHtml(t.description || 'Bankhändelse')}</strong><small>${new Date(t.created_at).toLocaleString('sv-SE')}</small></div><b class="${positive ? 'positive' : 'negative'}">${positive ? '+' : ''}${amount.toLocaleString('sv-SE')} kr</b></div>`;
-    }).join('') : '<div class="mssrp-bank-empty">Inga transaktioner ännu.</div>';
-
-    addMssrpSwishButton();
-    if (typeof mssrpPhoneRefreshBank === 'function') mssrpPhoneRefreshBank(account);
-  } catch (error) {
-    console.error('Bank load failed:', error);
-    toast(error.message || 'Kunde inte läsa banken. Kör den uppdaterade Supabase SQL-filen om RPC-funktionen saknas.');
-    const list = $('#bank-transactions-list'); if (list) list.innerHTML = `<div class="mssrp-bank-empty">Banktjänsten kunde inte laddas.<br><small>${escapeHtml(error.message || '')}</small></div>`;
-  }
-}
-
-async function loadAdminPayroll() {
-  if (!hasPermission('admin')) return;
-  try {
-    // Read/write payroll through the database RPCs. The previous screen used
-    // /api/admin/payroll, which caused the visible "Kunde inte läsa payroll-data"
-    // error when that optional backend route was unavailable.
-    const { data, error } = await supabase.rpc('mssrp_admin_payroll_users');
-    if (error) throw error;
-
-    const rows = Array.isArray(data) ? data : [];
-    const roles = rows[0]?.classes || [
-      {id:1,name:'Lön 1',daily_pay:36000},
-      {id:2,name:'Lön 2',daily_pay:42000},
-      {id:3,name:'Lön 3',daily_pay:50000},
-      {id:4,name:'Lön 4',daily_pay:60000},
-      {id:5,name:'Lön 5',daily_pay:75000},
-      {id:6,name:'Lön 6',daily_pay:90000}
-    ];
-
-    const rolesBox = $('#admin-payroll-roles');
-    if (rolesBox) rolesBox.innerHTML = roles.map(r => `<div class="mssrp-payroll-role"><div><strong>${escapeHtml(r.name)}</strong><small>Daglig RP-lön</small></div><div class="mssrp-payroll-edit"><input type="number" min="0" step="100" data-payroll-role="${r.id}" value="${Number(r.daily_pay || 0)}"><span>kr/dag</span><button class="mssrp-secondary" type="button" data-save-payroll-role="${r.id}">Spara</button></div></div>`).join('');
-
-    const search = ($('#admin-payroll-search')?.value || '').toLowerCase().trim();
-    const users = rows.filter(u => `${u.display_name || ''} ${u.email || ''} ${u.user_id || ''}`.toLowerCase().includes(search));
-    const tbody = $('#admin-payroll-users');
-    if (tbody) tbody.innerHTML = users.length ? users.map(u => {
-      const opts = roles.map(r => `<option value="${r.id}" ${String(r.id) === String(u.class_id) ? 'selected' : ''}>${escapeHtml(r.name)} · ${Number(r.daily_pay || 0).toLocaleString('sv-SE')} kr</option>`).join('');
-      return `<tr><td><strong>${escapeHtml(u.display_name || 'Okänd')}</strong><small>${escapeHtml(u.email || u.user_id || '')}</small></td><td><select class="mssrp-payroll-select" data-payroll-user="${u.user_id}">${opts}</select></td><td>${Number(u.daily_pay || 0).toLocaleString('sv-SE')} kr</td><td><button class="mssrp-secondary" type="button" data-save-payroll-user="${u.user_id}">Tilldela</button> <button class="mssrp-primary" type="button" data-pay-user="${u.user_id}">Betala idag</button></td></tr>`;
-    }).join('') : '<tr><td colspan="4">Inga användare hittades.</td></tr>';
-
-    $$('#admin-payroll-roles [data-save-payroll-role]').forEach(btn => btn.addEventListener('click', async () => {
-      const input = $(`[data-payroll-role="${CSS.escape(btn.dataset.savePayrollRole)}"]`); const salary = Number(input?.value);
-      if (!Number.isFinite(salary) || salary < 0) return toast('Ogiltig lön.');
-      try {
-        const { error } = await supabase.rpc('mssrp_admin_update_payroll_class', { p_class_id: Number(btn.dataset.savePayrollRole), p_daily_pay: Math.round(salary) });
-        if (error) throw error;
-        toast('Lönen uppdaterades.');
-        await loadAdminPayroll();
-      } catch(e){ toast(e.message || 'Kunde inte uppdatera lönen.'); }
-    }));
-
-    $$('#admin-payroll-users [data-save-payroll-user]').forEach(btn => btn.addEventListener('click', async () => {
-      const select = $(`[data-payroll-user="${CSS.escape(btn.dataset.savePayrollUser)}"]`); if (!select?.value) return;
-      try {
-        const { error } = await supabase.rpc('mssrp_admin_set_payroll', { p_user_id: btn.dataset.savePayrollUser, p_class_id: Number(select.value) });
-        if (error) throw error;
-        toast('Löneklass tilldelad.');
-        await loadAdminPayroll();
-      } catch(e){ toast(e.message || 'Kunde inte tilldela löneklass.'); }
-    }));
-
-    $$('#admin-payroll-users [data-pay-user]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!confirm('Betala dagens lön till användarens Swedbank RP-konto?')) return;
-      try {
-        const { error } = await supabase.rpc('mssrp_admin_pay_user', { p_user_id: btn.dataset.payUser });
-        if (error) throw error;
-        toast('Dagens lön betalades ut.');
-        await loadAdminPayroll();
-      } catch(e){ toast(e.message || 'Kunde inte betala ut lön.'); }
-    }));
-  } catch (error) {
-    console.error('Payroll load failed:', error);
-    const box=$('#admin-payroll-users');
-    if(box) box.innerHTML=`<tr><td colspan="4">Kunde inte läsa payroll-data.<br><small>${escapeHtml(error.message || 'Kontrollera Supabase SQL och adminbehörighet.')}</small></td></tr>`;
-    toast(error.message || 'Kunde inte läsa löner.');
-  }
 }
 
 function initPortalTabs() {
@@ -2674,15 +2707,190 @@ function openRoleplayTool(tool) {
   showModal('mssrp-tool-modal');
 }
 
-function bindPortalEvents() {
-  // Bank is a signed-in-only portal page.
-  $('[data-bank-nav]')?.addEventListener('click', event => {
+async function searchPolicePersons() {
+  if (!requireFeature('police_database')) return;
+
+  const query = $('#police-person-search')?.value.trim() || '';
+  const results = $('#police-person-results');
+  if (!results) return;
+
+  results.innerHTML = '<span>Söker…</span>';
+
+  try {
+    let data, error;
+    const uuid = query.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    try {
+      let request = supabase.from('profiles').select('id,display_name,roblox_username').order('display_name').limit(50);
+      if (query) {
+        const safe = query.replace(/[%_]/g, '\$&').replace(/,/g, ' ');
+        request = uuid ? request.eq('id', query) : request.or(`roblox_username.ilike.%${safe}%,display_name.ilike.%${safe}%`);
+      }
+      ({ data, error } = await request);
+      if (error) throw error;
+    } catch (firstError) {
+      let request = supabase.from('profiles').select('id,display_name').order('display_name').limit(50);
+      if (query) request = uuid ? request.eq('id', query) : request.ilike('display_name', `%${query.replace(/[%_]/g, '\$&')}%`);
+      ({ data, error } = await request);
+    }
+    if (error) throw error;
+
+    if (!data?.length) {
+      results.innerHTML = '<span>Inga personer hittades.</span>';
+      return;
+    }
+
+    results.innerHTML = data.map(person => `
+      <div class="mssrp-list-item">
+        <div>
+          <strong>${escapeHtml(person.roblox_username || person.display_name || 'Okänd')}</strong>
+          <small>Roblox · ${escapeHtml(person.display_name || person.id || '')}</small>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    console.error('Police person search failed:', error);
+    results.innerHTML = `<span>Kunde inte läsa polisregistret: ${escapeHtml(error.message || 'Okänt fel')}</span>`;
+  }
+}
+
+async function loadPoliceCases() {
+  if (!requireFeature('police_database')) return;
+
+  const results = $('#police-case-results');
+  if (!results) return;
+
+  results.innerHTML = '<span>Hämtar ärenden…</span>';
+
+  try {
+    const { data, error } = await supabase
+      .from('dispatch_calls')
+      .select('id,caller_name,location,description,status,priority,created_at')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+
+    if (!data?.length) {
+      results.innerHTML = '<span>Inga ärenden hittades.</span>';
+      return;
+    }
+
+    results.innerHTML = data.map(item => `
+      <div class="mssrp-list-item">
+        <div>
+          <strong>${escapeHtml(item.location || 'Okänd plats')}</strong>
+          <small>${escapeHtml(item.caller_name || 'Okänd')} · ${escapeHtml(item.status || 'new')}</small>
+          <small>${escapeHtml(item.description || '')}</small>
+        </div>
+        <b>${swedishPriorityLabel(item.priority)}</b>
+      </div>
+    `).join('');
+  } catch (error) {
+    console.error('Police cases failed:', error);
+    results.innerHTML = `<span>Kunde inte läsa ärenden: ${escapeHtml(error.message || 'Okänt fel')}</span>`;
+  }
+}
+
+function openNewPolicePost() {
+  if (!requireFeature('police_database')) return;
+
+  const title = $('#mssrp-tool-title');
+  const eyebrow = $('#mssrp-tool-eyebrow');
+  const body = $('#mssrp-tool-body');
+  if (!body) return;
+
+  if (title) title.textContent = 'Ny polispost';
+  if (eyebrow) eyebrow.textContent = 'POLISREGISTER';
+
+  body.innerHTML = `
+    <form id="mssrp-police-post-form" class="mssrp-tool-form">
+      <label>Namn / identifiering
+        <input id="police-post-name" required maxlength="120" placeholder="Namn eller RP-ID">
+      </label>
+      <label>Typ
+        <select id="police-post-type">
+          <option value="anteckning">Anteckning</option>
+          <option value="varning">Varning</option>
+          <option value="efterlysning">Efterlysning</option>
+          <option value="övrigt">Övrigt</option>
+        </select>
+      </label>
+      <label>Beskrivning
+        <textarea id="police-post-description" required maxlength="3000" placeholder="Beskriv registreringen…"></textarea>
+      </label>
+      <div class="mssrp-actions">
+        <button class="mssrp-primary" type="submit">Spara post</button>
+      </div>
+    </form>
+    <div class="mssrp-kicker" style="margin-top:22px">LOKALA POSTER</div>
+    <div id="mssrp-police-post-list" class="mssrp-tool-modal-list"></div>
+    <small>Den uppladdade appkoden innehåller ingen polisregister-tabell i Supabase, så nya poster sparas lokalt tills en sådan tabell kopplas in.</small>
+  `;
+
+  const key = `mssrp_police_posts_${currentUser.id}`;
+
+  const getRows = () => {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || '[]');
+      return Array.isArray(value) ? value : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const render = () => {
+    const list = $('#mssrp-police-post-list');
+    if (!list) return;
+
+    const rows = getRows();
+    list.innerHTML = rows.length ? rows.map((row, index) => `
+      <div class="mssrp-tool-record">
+        <strong>${escapeHtml(row.name)} · ${escapeHtml(row.type)}</strong>
+        <small>${escapeHtml(row.description)}</small>
+        <div style="margin-top:8px">
+          <button type="button" class="mssrp-secondary" data-police-post-delete="${index}">Ta bort</button>
+        </div>
+      </div>
+    `).join('') : '<div class="mssrp-status-row">Inga lokala poster ännu.</div>';
+
+    list.querySelectorAll('[data-police-post-delete]').forEach(button => {
+      button.addEventListener('click', () => {
+        const rows = getRows();
+        rows.splice(Number(button.dataset.policePostDelete), 1);
+        localStorage.setItem(key, JSON.stringify(rows));
+        render();
+      });
+    });
+  };
+
+  $('#mssrp-police-post-form')?.addEventListener('submit', event => {
     event.preventDefault();
-    if (!currentUser) { isLoginMode = true; updateAuthModal(); showModal('auth-modal'); toast('Logga in för att öppna banken.'); return; }
-    navigateToPortalPage('bank');
-    loadBankPage();
+
+    const row = {
+      name: $('#police-post-name')?.value.trim(),
+      type: $('#police-post-type')?.value,
+      description: $('#police-post-description')?.value.trim(),
+      created_at: new Date().toISOString()
+    };
+
+    if (!row.name || !row.description) {
+      toast('Fyll i namn och beskrivning.');
+      return;
+    }
+
+    const rows = getRows();
+    rows.unshift(row);
+    localStorage.setItem(key, JSON.stringify(rows));
+    event.target.reset();
+    render();
+    toast('Polisposten sparades.');
   });
 
+  render();
+  showModal('mssrp-tool-modal');
+}
+
+function bindPortalEvents() {
   // One delegated handler covers both static and dynamically rendered buttons/cards.
   document.addEventListener('click', event => {
     const featureEl = event.target.closest('[data-feature]');
@@ -2703,8 +2911,8 @@ function bindPortalEvents() {
       return;
     }
     const pageMap = {
-      roleplay_system:'roleplay',
-      bank:'bank', tactical_plan:'tactical', roblox_integration:'roblox', admin:'admin'
+      call_112:'112', police_database:'police', dispatch:'dispatch', roleplay_system:'roleplay',
+      tactical_plan:'tactical', roblox_integration:'roblox', admin:'admin'
     };
     const pageId = pageMap[feature];
     if (pageId) navigateToPortalPage(pageId);
@@ -2722,15 +2930,156 @@ function bindPortalEvents() {
   });
 
   $('#admin-refresh-top')?.addEventListener('click', async () => {
-    await Promise.all([loadAdminUsers(), loadAdminPermissions(), loadAdminStats(), loadAdminPayroll()]);
+    await Promise.all([loadAdminUsers(), loadAdminPermissions(), loadAdminStats()]);
     toast('Adminpanelen uppdaterad.');
   });
   $('#admin-reload-permissions')?.addEventListener('click', loadAdminPermissions);
   $('#admin-role-select')?.addEventListener('change', renderAdminPermissionEditor);
   $('#admin-save-permissions')?.addEventListener('click', saveAdminPermissions);
   $('#admin-user-search')?.addEventListener('input', () => loadAdminUsers());
-  $('#admin-payroll-search')?.addEventListener('input', () => loadAdminPayroll());
-  $('#bank-refresh')?.addEventListener('click', loadBankPage);
+
+  $('#portal-112-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!requireFeature('call_112')) return;
+    const roblox = $('#portal-112-roblox')?.value.trim();
+    const discord = $('#portal-112-discord')?.value.trim();
+    const district = $('#portal-112-district')?.value.trim();
+    const location = $('#portal-112-location')?.value.trim();
+    const postcode = $('#portal-112-postcode')?.value.trim();
+    const legalViolations = $('#portal-112-violations')?.value.trim();
+    const description = $('#portal-112-description')?.value.trim();
+    const units = $$('#portal-112-units option:checked').map(option => option.value);
+    const priority = normalizeSwedishPriority($('#portal-112-priority')?.value || 3);
+    if (!roblox || !location || !legalViolations || !description) {
+      toast('Fyll i Roblox-namn, plats, lagöverträdelser och beskrivning.');
+      return;
+    }
+    const button = event.target.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+    try {
+      const rawPayload = { roblox_username: roblox, discord_username: discord, district, postcode, requested_units: units };
+      const { error } = await supabase.from('dispatch_calls').insert({
+        caller_id: currentUser.id,
+        caller_name: roblox,
+        location,
+        description,
+        legal_violations: legalViolations,
+        priority,
+        raw_payload: rawPayload
+      });
+      if (error) throw error;
+      event.target.reset();
+      toast('112-larm skickat till Dispatch.');
+      navigateToPortalPage('dispatch');
+    } catch (error) {
+      console.error(error);
+      toast(error.message || 'Kunde inte skicka larmet.');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+
+  $('#dispatch-refresh')?.addEventListener('click', refreshDispatchBoard);
+
+  $('#duty-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!requireFeature('dispatch')) return;
+
+    const callsign = $('#duty-callsign')?.value.trim();
+    const unitType = $('#duty-unit-type')?.value || 'patrol';
+    if (!callsign) { toast('Ange ett enhetsnummer.'); return; }
+    if (!currentUser?.id) { toast('Du måste vara inloggad.'); return; }
+
+    const button = event.target.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+
+    try {
+      // Do not depend on the optional /api backend for duty status.
+      // Create the unit directly in Supabase instead.
+      const { data: existing, error: existingError } = await supabase
+        .from('dispatch_units')
+        .select('id,callsign,unit_type,status,user_id,assigned_call_id')
+        .eq('user_id', currentUser.id)
+        .maybeSingle();
+
+      if (existingError) throw existingError;
+
+      // Prevent two active units with the same callsign.
+      const { data: sameCallsign, error: callsignError } = await supabase
+        .from('dispatch_units')
+        .select('id,user_id,callsign,status')
+        .eq('callsign', callsign)
+        .neq('user_id', currentUser.id)
+        .neq('status', 'off-duty')
+        .limit(1);
+
+      if (callsignError) throw callsignError;
+      if (sameCallsign?.length) {
+        throw new Error(`Enhetsnumret ${callsign} används redan.`);
+      }
+
+      let unit;
+
+      if (existing?.id) {
+        const { data, error } = await supabase
+          .from('dispatch_units')
+          .update({
+            callsign,
+            unit_type: unitType,
+            status: existing.assigned_call_id ? 'assigned' : 'available'
+          })
+          .eq('id', existing.id)
+          .select('id,callsign,unit_type,status,user_id,assigned_call_id')
+          .single();
+        if (error) throw error;
+        unit = data;
+      } else {
+        const { data, error } = await supabase
+          .from('dispatch_units')
+          .insert({
+            callsign,
+            unit_type: unitType,
+            status: 'available',
+            user_id: currentUser.id,
+            assigned_call_id: null
+          })
+          .select('id,callsign,unit_type,status,user_id,assigned_call_id')
+          .single();
+        if (error) throw error;
+        unit = data;
+      }
+
+      toast(`Enhet ${unit.callsign} är nu i tjänst.`);
+      await refreshDispatchBoard();
+    } catch (error) {
+      console.error('Going on duty failed:', error);
+      toast(error.message || 'Kunde inte skapa enheten. Kontrollera Supabase RLS och kolumnerna i dispatch_units.');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+
+  $('#duty-off-btn')?.addEventListener('click', async () => {
+    if (!requireFeature('dispatch')) return;
+    if (!currentUser?.id) return toast('Du måste vara inloggad.');
+
+    try {
+      const { error } = await supabase
+        .from('dispatch_units')
+        .update({
+          status: 'off-duty',
+          assigned_call_id: null
+        })
+        .eq('user_id', currentUser.id);
+
+      if (error) throw error;
+      toast('Du har gått ur tjänst.');
+      await refreshDispatchBoard();
+    } catch (error) {
+      console.error('Going off duty failed:', error);
+      toast(error.message || 'Kunde inte gå ur tjänst.');
+    }
+  });
 
   $('#erlc-hint-form')?.addEventListener('submit', async event => {
     event.preventDefault();
@@ -2753,6 +3102,12 @@ function bindPortalEvents() {
     catch (error) { toast(error.message); }
   });
 
+  $('#police-person-search-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+    searchPolicePersons();
+  });
+  $('#police-load-cases')?.addEventListener('click', loadPoliceCases);
+  $('#police-new-post')?.addEventListener('click', openNewPolicePost);
 
   $$('[data-roleplay-tool]').forEach(button => {
     if (button.dataset.feature) return;
@@ -2763,6 +3118,7 @@ function bindPortalEvents() {
     toast(`${item.querySelector('strong')?.textContent || 'Shop'} är en rollspelsfunktion och är redo för vidare innehåll.`);
   }));
 
+  startDispatchPolling();
 }
 
 /* ============================================================
@@ -8224,9 +8580,6 @@ async function init() {
 
   await checkAuth();
   await loadAccessProfile();
-  initMssrpSocialEconomy();
-  initMssrpPhone();
-  if (window.location.hash === '#bank' && currentUser) await loadBankPage();
   await checkPasswordRecovery();
 
   setTool(
@@ -8258,607 +8611,141 @@ if (
 
 
 /* ============================================================
-   MSSRP SOCIAL / SWISH ADDON
-   Kept separate from the tactical planner core so the full
-   8K+ line planner is preserved.
+   MSSRP SOCIAL 1:1 - FACEBOOK / BLOCKET EXPERIENCE
+   Posts, follows, reactions, replies, images and Messenger.
    ============================================================ */
+function initMssrpSocialOneToOne() {
+  if (window.__mssrpSocial1to1) return;
+  window.__mssrpSocial1to1 = true;
+  const $s = s => document.querySelector(s);
+  const $$s = s => [...document.querySelectorAll(s)];
+  const esc = v => typeof escapeHtml === 'function' ? escapeHtml(v ?? '') : String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const uid = () => currentUser?.id || null;
+  const name = () => currentUser?.user_metadata?.display_name || currentUser?.user_metadata?.full_name || currentUser?.email?.split('@')[0] || 'MSSRP-användare';
+  const avatarLetter = n => (n || 'M').trim().charAt(0).toUpperCase();
+  const toastSafe = m => typeof toast === 'function' ? toast(m) : alert(m);
+  let socialState = { view:'facebook', activeChat:null, people:[], posts:[], conversations:[] };
 
-function mssrpSocialFormatSEK(value) {
-  return `${Number(value || 0).toLocaleString('sv-SE')} kr`;
-}
-
-async function mssrpSocialRpc(name, args = {}) {
-  const { data, error } = await supabase.rpc(name, args);
-  if (error) throw error;
-  return data;
-}
-
-function ensureMssrpSocialUI() {
-  if (!currentUser) return;
-
-  let section = $('#mssrp-social-hub');
-  if (!section) {
-    const roleplay = $('#roleplay');
-    if (!roleplay) return;
-    section = document.createElement('section');
-    section.id = 'mssrp-social-hub';
-    section.className = 'mssrp-section mssrp-portal-page mssrp-social-section';
-    section.dataset.portalPage = 'social';
-    section.dataset.featureSection = 'social';
-    section.innerHTML = `
-      <div class="mssrp-section-title">
-        <div class="mssrp-kicker">SOCIAL & MARKNAD</div>
-        <h2>Sociala tjänster</h2>
-        <p>Facebook, Blocket och behörighetsstyrt Darkweb för MSSRP.</p>
-      </div>
-      <div class="mssrp-social-grid">
-        <button type="button" class="mssrp-social-card" data-social-platform="facebook">
-          <span class="social-icon facebook">f</span>
-          <span><strong>Facebook</strong><small>Inlägg och likes.</small></span>
-        </button>
-        <button type="button" class="mssrp-social-card" data-social-platform="blocket">
-          <span class="social-icon blocket">B</span>
-          <span><strong>Blocket</strong><small>Köp och sälj med MSSRP Bank.</small></span>
-        </button>
-        <button type="button" class="mssrp-social-card restricted" data-social-platform="darkweb">
-          <span class="social-icon darkweb">◉</span>
-          <span><strong>Darkweb</strong><small>Kräver Darkweb-behörighet.</small></span>
-        </button>
-      </div>`;
-    roleplay.insertAdjacentElement('afterend', section);
+  async function requireSocialUser() {
+    if (!uid()) { toastSafe('Du måste vara inloggad för att använda Socialt.'); if (typeof showModal==='function') { isLoginMode=true; updateAuthModal(); showModal('auth-modal'); } return false; }
+    return true;
   }
 
-  if (!document.querySelector('[data-mssrp-social-nav]')) {
-    const nav = $('.mssrp-nav');
-    if (nav) {
-      const link = document.createElement('a');
-      link.href = '#social';
-      link.dataset.mssrpSocialNav = '1';
-      link.textContent = 'Socialt';
-      nav.appendChild(link);
+  async function profileFor(id) {
+    try { const {data}=await supabase.from('profiles').select('id,display_name,avatar_url').eq('id',id).maybeSingle(); return data || {id,display_name:'MSSRP-användare'}; } catch { return {id,display_name:'MSSRP-användare'}; }
+  }
+
+  function setSocialView(view) {
+    socialState.view=view;
+    $$('.mssrp-social-tab').forEach(b=>b.classList.toggle('active',b.dataset.socialView===view));
+    $$('.mssrp-social-view').forEach(v=>v.classList.add('hidden'));
+    const target=$s(`#social-${view}-view`); if(target) target.classList.remove('hidden');
+    if(view==='facebook') loadSocialFeed();
+    if(view==='messages') loadSocialConversations();
+    if(view==='blocket') loadBlocket1to1();
+    if(view==='profile') loadSocialProfile();
+  }
+
+  async function loadSocialHeader() {
+    const n=name();
+    ['social-current-user','social-my-name','social-profile-name'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=n;});
+    ['social-my-handle','social-profile-handle'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='@'+n.toLowerCase().replace(/[^a-z0-9åäö]+/gi,'').slice(0,20);});
+    ['social-my-avatar','social-composer-avatar','social-profile-avatar'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=avatarLetter(n);});
+    if(uid()) {
+      try { const [{count:followers},{count:following}] = await Promise.all([
+        supabase.from('mssrp_social_follows').select('id',{count:'exact',head:true}).eq('following_id',uid()),
+        supabase.from('mssrp_social_follows').select('id',{count:'exact',head:true}).eq('follower_id',uid())
+      ]); if($s('#social-follower-count')) $s('#social-follower-count').textContent=followers||0; if($s('#social-following-count')) $s('#social-following-count').textContent=following||0; } catch {}
     }
   }
 
-  section.querySelectorAll('[data-social-platform]').forEach(button => {
-    button.addEventListener('click', () => openMssrpSocialPlatform(button.dataset.socialPlatform));
-  });
-}
-
-async function openMssrpSocialPlatform(platform) {
-  if (!currentUser) {
-    isLoginMode = true;
-    updateAuthModal();
-    showModal('auth-modal');
-    return;
-  }
-
-  const permission = platform === 'darkweb' ? 'darkweb' : 'social';
-  if (!hasPermission(permission) && platform !== 'facebook' && platform !== 'blocket') {
-    toast('Du saknar Darkweb-behörighet.');
-    return;
-  }
-
-  const body = $('#mssrp-tool-body');
-  if (!body) return;
-
-  const meta = {
-    facebook: {
-      title: 'Facebook',
-      eyebrow: 'MSSRP · SOCIALT',
-      table: 'mssrp_facebook_posts'
-    },
-    blocket: {
-      title: 'Blocket',
-      eyebrow: 'MSSRP · MARKNAD',
-      table: 'mssrp_blocket_listings'
-    },
-    darkweb: {
-      title: 'Darkweb',
-      eyebrow: 'MSSRP · BEHÖRIGT OMRÅDE',
-      table: 'mssrp_darkweb_posts'
-    }
-  }[platform];
-
-  if (!meta) return;
-
-  $('#mssrp-tool-title').textContent = meta.title;
-  $('#mssrp-tool-eyebrow').textContent = meta.eyebrow;
-
-  body.innerHTML = `
-    <div class="mssrp-social-modal">
-      <div class="mssrp-social-modal-head">
-        <div>
-          <h3>${escapeHtml(platform === 'blocket' ? 'Köp och sälj' : platform === 'facebook' ? 'Facebook-flöde' : 'Darkweb-flöde')}</h3>
-          <p>${escapeHtml(platform === 'darkweb' ? 'Endast användare med Darkweb-behörighet kan använda detta område.' : 'MSSRP-rollspelstjänst.')}</p>
-        </div>
-        <button id="mssrp-social-refresh" class="mssrp-secondary" type="button">Uppdatera</button>
-      </div>
-      <div id="mssrp-social-content"><div class="mssrp-status-row">Laddar…</div></div>
-    </div>`;
-
-  const render = async () => {
-    const content = $('#mssrp-social-content');
-    if (!content) return;
-
+  async function uploadSocialImage(file) {
+    if(!file || !uid()) return null;
     try {
-      if (platform === 'blocket') {
-        await renderMssrpBlocket(content);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from(meta.table)
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(60);
-
-      if (error) throw error;
-
-      content.innerHTML = `
-        <form id="mssrp-social-post-form" class="mssrp-social-compose">
-          <textarea id="mssrp-social-post-text" required maxlength="2000" placeholder="Skriv ett inlägg…"></textarea>
-          <button class="mssrp-primary" type="submit">Publicera</button>
-        </form>
-        <div class="mssrp-social-feed">
-          ${(data || []).map(post => `
-            <article class="mssrp-social-post">
-              <div class="mssrp-social-post-head">
-                <strong>${escapeHtml(post.author_name || post.user_id || 'Användare')}</strong>
-                <small>${post.created_at ? new Date(post.created_at).toLocaleString('sv-SE') : ''}</small>
-              </div>
-              <p>${escapeHtml(post.body || post.content || '')}</p>
-              <div class="mssrp-social-actions">
-                <button type="button" data-mssrp-like="${escapeHtml(post.id)}">♥ ${Number(post.likes || 0)}</button>
-                ${post.user_id === currentUser.id ? `<button type="button" data-mssrp-delete="${escapeHtml(post.id)}">Ta bort</button>` : ''}
-              </div>
-            </article>`).join('') || '<div class="mssrp-status-row">Inga inlägg ännu.</div>'}
-        </div>`;
-
-      $('#mssrp-social-post-form')?.addEventListener('submit', async event => {
-        event.preventDefault();
-        const textValue = $('#mssrp-social-post-text')?.value.trim();
-        if (!textValue) return;
-
-        try {
-          const { error: insertError } = await supabase
-            .from(meta.table)
-            .insert({
-              user_id: currentUser.id,
-              author_name: currentUser.email || 'MSSRP-användare',
-              body: textValue
-            });
-          if (insertError) throw insertError;
-          toast('Inlägget publicerades.');
-          await render();
-        } catch (error) {
-          toast(error.message || 'Kunde inte publicera inlägget.');
-        }
-      });
-
-      content.querySelectorAll('[data-mssrp-like]').forEach(button => {
-        button.addEventListener('click', async () => {
-          try {
-            const result = await mssrpSocialRpc('mssrp_like_social_post', {
-              p_platform: platform,
-              p_post_id: button.dataset.mssrpLike
-            });
-            if (result === false) throw new Error('Gilla kunde inte registreras.');
-            await render();
-          } catch (error) {
-            toast(error.message || 'Kunde inte gilla inlägget.');
-          }
-        });
-      });
-
-      content.querySelectorAll('[data-mssrp-delete]').forEach(button => {
-        button.addEventListener('click', async () => {
-          try {
-            const { error: deleteError } = await supabase
-              .from(meta.table)
-              .delete()
-              .eq('id', button.dataset.mssrpDelete)
-              .eq('user_id', currentUser.id);
-            if (deleteError) throw deleteError;
-            await render();
-          } catch (error) {
-            toast(error.message || 'Kunde inte ta bort inlägget.');
-          }
-        });
-      });
-    } catch (error) {
-      content.innerHTML = `<div class="mssrp-status-row">${escapeHtml(error.message || 'Kunde inte läsa tjänsten.')}</div>`;
-    }
-  };
-
-  $('#mssrp-social-refresh')?.addEventListener('click', render);
-  await render();
-  showModal('mssrp-tool-modal');
-}
-
-async function renderMssrpBlocket(content) {
-  const { data, error } = await supabase
-    .from('mssrp_blocket_listings')
-    .select('*')
-    .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(60);
-
-  if (error) throw error;
-
-  content.innerHTML = `
-    <form id="mssrp-blocket-form" class="mssrp-social-compose blocket-compose">
-      <div class="mssrp-form-grid-2">
-        <label>Annonsrubrik<input id="mssrp-blocket-title" required maxlength="120"></label>
-        <label>Pris<input id="mssrp-blocket-price" required type="number" min="1" step="1"></label>
-      </div>
-      <textarea id="mssrp-blocket-description" required maxlength="2000" placeholder="Beskriv varan…"></textarea>
-      <button class="mssrp-primary" type="submit">Publicera annons</button>
-    </form>
-    <div class="mssrp-market-grid">
-      ${(data || []).map(item => `
-        <article class="mssrp-market-card">
-          <div class="market-badge">TILL SALU</div>
-          <h3>${escapeHtml(item.title || 'Annons')}</h3>
-          <p>${escapeHtml(item.description || '')}</p>
-          <div class="market-footer">
-            <strong>${mssrpSocialFormatSEK(item.price)}</strong>
-            ${item.user_id === currentUser.id
-              ? '<button class="mssrp-secondary" type="button" disabled>Din annons</button>'
-              : `<button class="mssrp-primary" type="button" data-mssrp-buy="${escapeHtml(item.id)}">Köp</button>`}
-          </div>
-        </article>`).join('') || '<div class="mssrp-status-row">Inga annonser ännu.</div>'}
-    </div>`;
-
-  $('#mssrp-blocket-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    try {
-      const price = Number($('#mssrp-blocket-price')?.value);
-      if (!Number.isFinite(price) || price <= 0) throw new Error('Ange ett giltigt pris.');
-
-      const { error: insertError } = await supabase
-        .from('mssrp_blocket_listings')
-        .insert({
-          user_id: currentUser.id,
-          author_name: currentUser.email || 'MSSRP-användare',
-          title: $('#mssrp-blocket-title').value.trim(),
-          description: $('#mssrp-blocket-description').value.trim(),
-          price: Math.round(price),
-          status: 'active'
-        });
-      if (insertError) throw insertError;
-      toast('Annonsen publicerades.');
-      await renderMssrpBlocket(content);
-    } catch (error) {
-      toast(error.message || 'Kunde inte publicera annonsen.');
-    }
-  });
-
-  content.querySelectorAll('[data-mssrp-buy]').forEach(button => {
-    button.addEventListener('click', async () => {
-      try {
-        const result = await mssrpSocialRpc('mssrp_buy_blocket_listing', {
-          p_listing_id: button.dataset.mssrpBuy
-        });
-        toast(`Köpet är genomfört för ${mssrpSocialFormatSEK(result?.price)}.`);
-        if (typeof loadBankPage === 'function') await loadBankPage();
-        await renderMssrpBlocket(content);
-      } catch (error) {
-        toast(error.message || 'Köpet kunde inte genomföras.');
-      }
-    });
-  });
-}
-
-function addMssrpSwishButton() {
-  const existing = $('#mssrp-swish-open');
-  if (existing) {
-    existing.onclick = openMssrpSwish;
-    return;
-  }
-  const hero = document.querySelector('.mssrp-bank-hero');
-  if (!hero) return;
-
-  const button = document.createElement('button');
-  button.id = 'mssrp-swish-open';
-  button.type = 'button';
-  button.className = 'mssrp-secondary mssrp-bank-swish-btn';
-  button.textContent = 'Swish';
-  button.addEventListener('click', openMssrpSwish);
-  hero.querySelector('.mssrp-bank-balance')?.appendChild(button);
-}
-
-function openMssrpSwish() {
-  if (!currentUser) {
-    isLoginMode = true;
-    updateAuthModal();
-    showModal('auth-modal');
-    return;
+      const ext=(file.name.split('.').pop()||'jpg').toLowerCase().replace(/[^a-z0-9]/g,'')||'jpg';
+      const path=`${uid()}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const {error}=await supabase.storage.from('mssrp-social').upload(path,file,{upsert:false,contentType:file.type||'image/jpeg'});
+      if(error) throw error;
+      const {data}=supabase.storage.from('mssrp-social').getPublicUrl(path); return data?.publicUrl||null;
+    } catch(error) { console.error('Social image upload:',error); toastSafe('Bilden kunde inte laddas upp. Kör SQL-migrationen för Social-bilder först.'); return null; }
   }
 
-  const phoneBody = document.querySelector('#mssrp-phone-app-body');
-  const renderInto = phoneBody && document.body.classList.contains('mssrp-phone-app-open');
-  const body = renderInto ? phoneBody : $('#mssrp-tool-body');
-  if (!body) return;
-
-  const html = `
-    <div class="mssrp-swish-hero">
-      <div class="mssrp-swish-logo">S</div>
-      <div><strong>Swish</strong><small>Skicka pengar direkt till ett RP-telefonnummer.</small></div>
-    </div>
-    <form id="mssrp-swish-form" class="mssrp-tool-form mssrp-swish-form">
-      <label>Mottagarens telefonnummer<input id="mssrp-swish-recipient" required inputmode="tel" placeholder="070-123 45 67"></label>
-      <label>Belopp<input id="mssrp-swish-amount" type="number" min="1" max="100000000" step="1" required placeholder="5000"></label>
-      <label>Meddelande<input id="mssrp-swish-message" maxlength="140" placeholder="T.ex. Hyra"></label>
-      <div id="mssrp-swish-recipient-preview" class="mssrp-phone-result"></div>
-      <button class="mssrp-primary" type="submit">Swisha</button>
-    </form>`;
-  body.innerHTML = html;
-
-  const recipientInput = $('#mssrp-swish-recipient');
-  let lookupTimer = null;
-  recipientInput?.addEventListener('input', () => {
-    clearTimeout(lookupTimer);
-    const value = recipientInput.value.trim();
-    if (!value) { $('#mssrp-swish-recipient-preview').textContent = ''; return; }
-    lookupTimer = setTimeout(async () => {
-      try {
-        const { data, error } = await supabase.rpc('mssrp_lookup_phone', { p_phone: value });
-        if (error) throw error;
-        const preview = $('#mssrp-swish-recipient-preview');
-        if (preview) preview.textContent = data?.display_name ? `${data.display_name} · ${data.phone_number}` : 'Numret hittades inte';
-      } catch {}
-    }, 250);
-  });
-
-  $('#mssrp-swish-form')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    const recipient = $('#mssrp-swish-recipient').value.trim();
-    const amount = Number($('#mssrp-swish-amount').value);
-    const message = $('#mssrp-swish-message').value.trim();
-    if (!recipient || !Number.isFinite(amount) || amount <= 0) {
-      toast('Ange telefonnummer och ett giltigt belopp.');
-      return;
-    }
-
-    const button = event.target.querySelector('button[type="submit"]');
-    if (button) button.disabled = true;
-    try {
-      const { data: result, error } = await supabase.rpc('mssrp_swish', {
-        p_recipient: recipient,
-        p_amount: Math.round(amount),
-        p_message: message || 'Swish-betalning'
-      });
-      if (error) throw error;
-      toast(`Swish skickad: ${mssrpSocialFormatSEK(amount)}.`);
-      if (result?.recipient_name) toast(`Mottagare: ${result.recipient_name}`);
-      if (renderInto) {
-        await mssrpPhoneRefresh();
-        renderMssrpPhoneApp('home');
-      } else if (typeof loadBankPage === 'function') {
-        await loadBankPage();
-      }
-    } catch (error) {
-      toast(error.message || 'Swish-betalningen kunde inte genomföras.');
-    } finally {
-      if (button) button.disabled = false;
-    }
-  });
-
-  if (!renderInto) showModal('mssrp-tool-modal');
-}
-
-function initMssrpSocialEconomy() {
-  ensureMssrpSocialUI();
-  addMssrpSwishButton();
-}
-
-
-/* ============================================================
-   MSSRP RP PHONE · SMS · CALLS · PHONE SWISH
-   ============================================================ */
-
-let mssrpPhonePollTimer = null;
-let mssrpPhoneData = { phone_number: '', sms: [], calls: [] };
-let mssrpPhoneActiveApp = 'home';
-
-async function mssrpPhoneRefresh() {
-  if (!currentUser) return;
-  try {
-    const { data, error } = await supabase.rpc('mssrp_get_phone_state');
-    if (error) throw error;
-    mssrpPhoneData = data || { phone_number: '', sms: [], calls: [] };
-    const numberEl = $('#mssrp-phone-number');
-    if (numberEl) numberEl.textContent = mssrpPhoneData.phone_number || 'Tilldelar nummer…';
-    renderMssrpPhoneHomeBadges();
-    renderMssrpIncomingCall();
-    if (mssrpPhoneActiveApp === 'call') renderMssrpPhoneApp('call', true);
-    if (mssrpPhoneActiveApp === 'bank') mssrpPhoneRefreshBank();
-  } catch (error) {
-    console.error('Phone refresh failed:', error);
-    const status = $('#mssrp-phone-status');
-    if (status) status.textContent = 'Telefonen kunde inte ansluta till MSSRP.';
-  }
-}
-
-function renderMssrpPhoneHomeBadges() {
-  const unread = (mssrpPhoneData.sms || []).filter(x => x.recipient_id === currentUser?.id && !x.read_at).length;
-  const smsBadge = $('#mssrp-phone-sms-badge');
-  if (smsBadge) { smsBadge.textContent = unread > 99 ? '99+' : String(unread); smsBadge.classList.toggle('hidden', unread === 0); }
-  const calls = (mssrpPhoneData.calls || []).filter(x => x.recipient_id === currentUser?.id && x.status === 'ringing').length;
-  const callBadge = $('#mssrp-phone-call-badge');
-  if (callBadge) { callBadge.textContent = calls > 9 ? '9+' : String(calls); callBadge.classList.toggle('hidden', calls === 0); }
-}
-
-function mssrpPhoneFormatNumber(value) {
-  const raw = String(value || '').replace(/\D/g, '');
-  if (!raw) return '';
-  if (raw.startsWith('46')) return '0' + raw.slice(2);
-  return raw;
-}
-
-function mssrpPhoneFormatDisplay(value) {
-  const n = mssrpPhoneFormatNumber(value);
-  if (n.length === 10 && n.startsWith('0')) return `${n.slice(0,3)}-${n.slice(3,6)} ${n.slice(6,8)} ${n.slice(8)}`;
-  return value || 'Okänt nummer';
-}
-
-function renderMssrpIncomingCall() {
-  const call = (mssrpPhoneData.calls || []).find(x => x.recipient_id === currentUser?.id && x.status === 'ringing');
-  const box = $('#mssrp-phone-incoming');
-  if (!box) return;
-  if (!call) { box.classList.add('hidden'); return; }
-  box.classList.remove('hidden');
-  const name = call.caller_name || mssrpPhoneFormatDisplay(call.caller_phone);
-  box.innerHTML = `<div class="mssrp-incoming-call-icon">☎</div><div><span>INKOMMANDE SAMTAL</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(call.caller_phone))}</small></div><div class="mssrp-incoming-actions"><button type="button" class="mssrp-phone-danger" data-phone-reject="${call.id}">Avvisa</button><button type="button" class="mssrp-phone-answer" data-phone-answer="${call.id}">Svara</button></div>`;
-}
-
-function renderMssrpPhoneHome() {
-  const body = $('#mssrp-phone-app-body');
-  if (!body) return;
-  document.body.classList.remove('mssrp-phone-app-open');
-  mssrpPhoneActiveApp = 'home';
-  $('#mssrp-phone-app-title') && ($('#mssrp-phone-app-title').textContent = 'Hem');
-  $('#mssrp-phone-app-subtitle') && ($('#mssrp-phone-app-subtitle').textContent = mssrpPhoneData.phone_number ? mssrpPhoneFormatDisplay(mssrpPhoneData.phone_number) : 'MSSRP');
-  body.innerHTML = `
-    <div class="mssrp-iphone-status"><span>9:41</span><span>▮▮▮ ◉</span></div>
-    <div class="mssrp-iphone-wallpaper">
-      <div class="mssrp-phone-date">MSSRP · ${new Date().toLocaleDateString('sv-SE',{weekday:'long',day:'numeric',month:'long'})}</div>
-      <div class="mssrp-phone-app-grid">
-        <button class="mssrp-phone-app" data-phone-app="call"><span class="phone-app-icon phone-green">☎</span><strong>Telefon</strong><b id="mssrp-phone-call-badge" class="mssrp-phone-badge hidden">0</b></button>
-        <button class="mssrp-phone-app" data-phone-app="sms"><span class="phone-app-icon phone-green">▰</span><strong>Meddelanden</strong><b id="mssrp-phone-sms-badge" class="mssrp-phone-badge hidden">0</b></button>
-        <button class="mssrp-phone-app" data-phone-app="swish"><span class="phone-app-icon phone-blue">S</span><strong>Swish</strong></button>
-        <button class="mssrp-phone-app" data-phone-app="bank"><span class="phone-app-icon phone-orange">$</span><strong>Swedbank</strong></button>
-        <button class="mssrp-phone-app" data-phone-app="contacts"><span class="phone-app-icon phone-gray">●●</span><strong>Kontakter</strong></button>
-      </div>
-      <div class="mssrp-phone-dock"><button class="mssrp-phone-dock-app" data-phone-app="call">☎</button><button class="mssrp-phone-dock-app" data-phone-app="sms">▰</button><button class="mssrp-phone-dock-app" data-phone-app="swish">S</button><button class="mssrp-phone-dock-app" data-phone-app="bank">$</button></div>
-    </div>`;
-  renderMssrpPhoneHomeBadges();
-}
-
-function renderMssrpPhoneApp(app, silent = false) {
-  const body = $('#mssrp-phone-app-body');
-  if (!body) return;
-  mssrpPhoneActiveApp = app;
-  document.body.classList.add('mssrp-phone-app-open');
-  const title = $('#mssrp-phone-app-title');
-  const subtitle = $('#mssrp-phone-app-subtitle');
-  const home = $('#mssrp-phone-home-button');
-  if (home) home.onclick = () => renderMssrpPhoneHome();
-  if (title) title.textContent = ({call:'Telefon',sms:'Meddelanden',swish:'Swish',bank:'Swedbank',contacts:'Kontakter'})[app] || 'Telefon';
-  if (subtitle) subtitle.textContent = mssrpPhoneData.phone_number ? mssrpPhoneFormatDisplay(mssrpPhoneData.phone_number) : 'MSSRP';
-
-  if (app === 'swish') { openMssrpSwish(); return; }
-  if (app === 'bank') {
-    body.innerHTML = `<div class="mssrp-phone-app-inner"><div class="mssrp-phone-bank-logo"><span>✦</span><strong>Swedbank</strong></div><div class="mssrp-phone-bank-balance"><small>SALDO</small><strong id="mssrp-phone-bank-balance">Laddar…</strong><span>SEK</span></div><button class="mssrp-primary" id="mssrp-phone-bank-refresh">Uppdatera saldo</button><div id="mssrp-phone-bank-transactions" class="mssrp-phone-mini-list"></div></div>`;
-    mssrpPhoneRefreshBank();
-    $('#mssrp-phone-bank-refresh')?.addEventListener('click', mssrpPhoneRefreshBank);
-    return;
-  }
-  if (app === 'call') renderMssrpPhoneCallApp();
-  else if (app === 'sms') renderMssrpPhoneSmsApp();
-  else if (app === 'contacts') renderMssrpPhoneContactsApp();
-}
-
-async function mssrpPhoneRefreshBank(account = null) {
-  try {
-    if (!account) {
-      const { data, error } = await supabase.rpc('mssrp_get_bank_account');
-      if (error) throw error;
-      account = data;
-    }
-    const balance = $('#mssrp-phone-bank-balance');
-    if (balance) balance.textContent = Number(account?.balance || 0).toLocaleString('sv-SE',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const { data: tx, error } = await supabase.rpc('mssrp_get_bank_transactions',{p_limit:8});
-    if (error) throw error;
-    const box = $('#mssrp-phone-bank-transactions');
-    if (box) box.innerHTML = (tx || []).map(t => `<div><span>${escapeHtml(t.description || 'Bankhändelse')}</span><b class="${Number(t.amount)>=0?'positive':'negative'}">${Number(t.amount)>=0?'+':''}${Number(t.amount).toLocaleString('sv-SE')} kr</b></div>`).join('') || '<small>Inga transaktioner.</small>';
-  } catch (error) {
-    const balance = $('#mssrp-phone-bank-balance'); if (balance) balance.textContent = 'Fel';
-  }
-}
-
-function renderMssrpPhoneCallApp() {
-  const body = $('#mssrp-phone-app-body');
-  if (!body) return;
-  const allCalls = (mssrpPhoneData.calls || []).filter(c => c.caller_id === currentUser?.id || c.recipient_id === currentUser?.id);
-  const active = allCalls.find(c => c.status === 'accepted' && !c.ended_at);
-  const calls = allCalls.filter(c => c.id !== active?.id).slice(0,12);
-
-  if (active) {
-    const outgoing = active.caller_id === currentUser?.id;
-    const number = outgoing ? active.recipient_phone : active.caller_phone;
-    const name = outgoing ? active.recipient_name : active.caller_name;
-    const started = active.answered_at ? new Date(active.answered_at) : new Date();
-    const elapsed = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
-    const mm = String(Math.floor(elapsed / 60)).padStart(2,'0');
-    const ss = String(elapsed % 60).padStart(2,'0');
-    body.innerHTML = `<div class="mssrp-phone-app-inner mssrp-active-call"><div class="mssrp-active-call-avatar">${escapeHtml((name || '?').slice(0,1).toUpperCase())}</div><strong>${escapeHtml(name || mssrpPhoneFormatDisplay(number))}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(number))}</small><div class="mssrp-call-timer">${mm}:${ss}</div><span class="mssrp-call-live">PÅGÅENDE SAMTAL</span><button class="mssrp-phone-danger mssrp-end-call" data-phone-end="${active.id}" type="button">Avsluta samtal</button></div>`;
-    return;
+  async function loadSocialFeed() {
+    const feed=$s('#social-feed'); if(!feed) return; feed.innerHTML='<div class="mssrp-social-loading">Laddar flödet…</div>';
+    const {data,error}=await supabase.from('mssrp_social_posts').select('*').order('created_at',{ascending:false}).limit(50);
+    if(error){console.error(error);feed.innerHTML='<div class="mssrp-social-loading">Kunde inte läsa Facebook-flödet. Kör social-migrationen i Supabase.</div>';return;}
+    socialState.posts=data||[]; if(!data?.length){feed.innerHTML='<div class="mssrp-social-loading">Inga inlägg ännu. Bli den första att publicera något.</div>';return;}
+    feed.innerHTML='';
+    for(const post of data) feed.insertAdjacentHTML('beforeend', await renderSocialPost(post));
   }
 
-  body.innerHTML = `<div class="mssrp-phone-app-inner"><div class="mssrp-phone-number-card"><small>MITT NUMMER</small><strong>${escapeHtml(mssrpPhoneFormatDisplay(mssrpPhoneData.phone_number))}</strong></div><form id="mssrp-phone-call-form" class="mssrp-phone-compose"><label>Ring nummer<input id="mssrp-call-number" required inputmode="tel" placeholder="070-123 45 67"></label><button class="mssrp-phone-answer" type="submit">Ring</button></form><div class="mssrp-phone-section-title">Senaste samtal</div><div class="mssrp-phone-mini-list">${calls.length ? calls.map(c => { const outgoing=c.caller_id===currentUser?.id; const number=outgoing?c.recipient_phone:c.caller_phone; const name=outgoing?c.recipient_name:c.caller_name; const label=c.status==='accepted'?'Samtal':c.status==='missed'?'Missat':c.status==='rejected'?'Avvisat':'Ringer'; return `<div><span><strong>${escapeHtml(name || mssrpPhoneFormatDisplay(number))}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(number))}</small></span><b>${label}</b></div>`; }).join('') : '<small>Inga samtal ännu.</small>'}</div></div>`;
-  $('#mssrp-phone-call-form')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    const number=$('#mssrp-call-number')?.value.trim(); if(!number) return;
-    try { const {data,error}=await supabase.rpc('mssrp_start_call',{p_recipient_phone:number}); if(error) throw error; toast(`Ringer ${mssrpPhoneFormatDisplay(data?.recipient_phone || number)}…`); await mssrpPhoneRefresh(); }
-    catch(error){ toast(error.message || 'Samtalet kunde inte startas.'); }
+  async function reactionSummary(postId) {
+    try { const {data}=await supabase.from('mssrp_social_reactions').select('reaction,user_id').eq('post_id',postId); const counts={}; (data||[]).forEach(r=>counts[r.reaction]=(counts[r.reaction]||0)+1); const mine=(data||[]).some(r=>r.user_id===uid()); return {counts,mine}; } catch{return {counts:{},mine:false};}
+  }
+
+  async function renderSocialPost(post) {
+    const p=post.author_name||'MSSRP-användare'; const summary=await reactionSummary(post.id);
+    const {data:comments}=await supabase.from('mssrp_social_comments').select('*').eq('post_id',post.id).order('created_at',{ascending:true}).limit(30).catch(()=>({data:[]}));
+    const commentHtml=(comments||[]).map(c=>`<div class="mssrp-comment"><div class="mssrp-avatar">${esc(avatarLetter(c.author_name))}</div><div class="mssrp-comment-body"><strong>${esc(c.author_name||'Användare')}</strong><p>${esc(c.body||'')}</p>${c.image_url?`<img class="mssrp-comment-image" src="${esc(c.image_url)}" alt="Bild i kommentar">`:''}</div></div>`).join('');
+    const reactionText=Object.entries(summary.counts).map(([r,c])=>`${r} ${c}`).join(' · ')||'0 reaktioner';
+    return `<article class="mssrp-fb-post" data-post-id="${post.id}"><div class="mssrp-post-head"><div class="mssrp-avatar">${esc(avatarLetter(p))}</div><div><strong>${esc(p)}</strong><small>${new Date(post.created_at).toLocaleString('sv-SE')} · 🌐</small></div><button class="mssrp-post-menu">•••</button></div>${post.body?`<div class="mssrp-post-text">${esc(post.body)}</div>`:''}${post.image_url?`<img class="mssrp-post-image" src="${esc(post.image_url)}" alt="Inläggsbild">`:''}<div class="mssrp-post-stats"><span>${esc(reactionText)}</span><span>${comments?.length||0} kommentarer</span></div><div class="mssrp-post-actions"><button data-social-react="👍" class="${summary.mine?'active':''}">👍 Gilla</button><button data-social-comment>💬 Kommentera</button><button data-social-share>↗ Dela</button></div><div class="mssrp-comments"><div class="mssrp-comment-list">${commentHtml}</div><form class="mssrp-comment-form"><input name="comment" placeholder="Skriv en kommentar…"><label class="mssrp-image-button">🖼️<input name="image" type="file" accept="image/*" hidden></label><button>Skicka</button></form></div></article>`;
+  }
+
+  async function createPost() {
+    if(!await requireSocialUser()) return;
+    const modal=document.createElement('div'); modal.className='mssrp-social-compose-modal'; modal.innerHTML=`<div class="mssrp-social-modal-backdrop"></div><div class="mssrp-social-compose-card"><button class="mssrp-social-modal-close">×</button><h2>Skapa inlägg</h2><p>Dela något med Malmö Skåne.</p><form id="mssrp-social-post-form" class="mssrp-social-compose-form"><textarea name="body" placeholder="Vad tänker du på?"></textarea><label class="mssrp-upload-box">🖼️ Lägg till foto/video<input type="file" name="image" accept="image/*" hidden></label><img id="mssrp-compose-preview" class="mssrp-upload-preview hidden"><button class="mssrp-social-primary">Publicera</button></form></div>`; document.body.appendChild(modal);
+    modal.querySelector('.mssrp-social-modal-close').onclick=()=>modal.remove(); modal.querySelector('.mssrp-social-modal-backdrop').onclick=()=>modal.remove();
+    const file=modal.querySelector('input[type=file]'),preview=modal.querySelector('#mssrp-compose-preview'); file.onchange=()=>{if(file.files[0]){preview.src=URL.createObjectURL(file.files[0]);preview.classList.remove('hidden')}};
+    modal.querySelector('form').onsubmit=async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;try{const body=e.target.body.value.trim();let image_url=null;if(file.files[0]) image_url=await uploadSocialImage(file.files[0]);const {error}=await supabase.from('mssrp_social_posts').insert({author_id:uid(),author_name:name(),body,image_url});if(error)throw error;modal.remove();toastSafe('Inlägget publicerades.');await loadSocialFeed();}catch(err){toastSafe(err.message||'Kunde inte publicera inlägget.');}finally{btn.disabled=false}};
+  }
+
+  async function toggleReaction(postId,reaction='👍') {
+    if(!await requireSocialUser()) return;
+    const {data:existing}=await supabase.from('mssrp_social_reactions').select('id').eq('post_id',postId).eq('user_id',uid()).maybeSingle();
+    if(existing) await supabase.from('mssrp_social_reactions').delete().eq('id',existing.id); else await supabase.from('mssrp_social_reactions').insert({post_id:postId,user_id:uid(),reaction});
+    await loadSocialFeed();
+  }
+
+  async function submitComment(form,postId) {
+    if(!await requireSocialUser()) return; const body=form.comment.value.trim(); let image_url=null;if(form.image.files[0])image_url=await uploadSocialImage(form.image.files[0]); if(!body&&!image_url)return;
+    const {error}=await supabase.from('mssrp_social_comments').insert({post_id:postId,author_id:uid(),author_name:name(),body,image_url}); if(error)toastSafe(error.message);else await loadSocialFeed();
+  }
+
+  async function loadSuggestions() {
+    const box=$s('#social-suggestions');if(!box||!uid())return;const {data}=await supabase.from('profiles').select('id,display_name,avatar_url').neq('id',uid()).limit(12);const people=data||[];box.innerHTML=people.map(p=>`<div class="mssrp-suggestion" data-person-id="${p.id}"><div class="mssrp-avatar">${esc(avatarLetter(p.display_name))}</div><div class="mssrp-suggestion-main"><strong>${esc(p.display_name||'Användare')}</strong><small>MSSRP</small></div><button class="mssrp-follow-btn" data-follow-user="${p.id}">Följ</button></div>`).join('')||'<small>Inga förslag just nu.</small>';
+    for(const p of people){const {data:f}=await supabase.from('mssrp_social_follows').select('id').eq('follower_id',uid()).eq('following_id',p.id).maybeSingle();const b=box.querySelector(`[data-follow-user="${p.id}"]`);if(b&&f){b.textContent='Följer';b.classList.add('following')}}
+  }
+
+  async function toggleFollow(target) {if(!await requireSocialUser())return;if(target===uid())return;const {data:f}=await supabase.from('mssrp_social_follows').select('id').eq('follower_id',uid()).eq('following_id',target).maybeSingle();if(f)await supabase.from('mssrp_social_follows').delete().eq('id',f.id);else await supabase.from('mssrp_social_follows').insert({follower_id:uid(),following_id:target});await loadSuggestions();await loadSocialHeader();}
+
+  async function loadSocialConversations() {
+    const box=$s('#social-conversations');if(!box||!uid())return;const {data,error}=await supabase.from('mssrp_social_messages').select('*').or(`sender_id.eq.${uid()},receiver_id.eq.${uid()}`).order('created_at',{ascending:false}).limit(200);if(error){box.innerHTML='<div class="mssrp-social-loading">Kunde inte läsa meddelanden.</div>';return;}const map=new Map();for(const m of data||[]){const other=m.sender_id===uid()?m.receiver_id:m.sender_id;if(!map.has(other))map.set(other,m)}box.innerHTML='';for(const [other,m] of map){const p=await profileFor(other);box.insertAdjacentHTML('beforeend',`<div class="mssrp-conversation" data-chat-user="${other}"><div class="mssrp-avatar">${esc(avatarLetter(p.display_name))}</div><div><strong>${esc(p.display_name)}</strong><small>${esc(m.body||'Bild')}</small></div></div>`)}if(!map.size)box.innerHTML='<div class="mssrp-social-loading">Inga meddelanden ännu.</div>';
+  }
+
+  async function openChat(other) {const p=await profileFor(other);socialState.activeChat=other;$s('#social-chat-empty')?.classList.add('hidden');$s('#social-chat-active')?.classList.remove('hidden');$s('#social-chat-name').textContent=p.display_name||'Användare';$s('#social-chat-avatar').textContent=avatarLetter(p.display_name);await renderChatMessages();}
+  async function renderChatMessages(){const box=$s('#social-chat-messages');if(!box||!socialState.activeChat)return;const {data}=await supabase.from('mssrp_social_messages').select('*').or(`and(sender_id.eq.${uid()},receiver_id.eq.${socialState.activeChat}),and(sender_id.eq.${socialState.activeChat},receiver_id.eq.${uid()})`).order('created_at',{ascending:true});box.innerHTML=(data||[]).map(m=>`<div class="mssrp-chat-bubble ${m.sender_id===uid()?'mine':'theirs'}">${m.image_url?`<img src="${esc(m.image_url)}">`:''}${m.body?`<div>${esc(m.body)}</div>`:''}<small>${new Date(m.created_at).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'})}</small></div>`).join('');box.scrollTop=box.scrollHeight;}
+  async function sendChat(e){e.preventDefault();if(!socialState.activeChat||!await requireSocialUser())return;const input=$s('#social-chat-input'),file=$s('#social-chat-image');const body=input.value.trim();let image_url=null;if(file.files[0])image_url=await uploadSocialImage(file.files[0]);if(!body&&!image_url)return;const {error}=await supabase.from('mssrp_social_messages').insert({sender_id:uid(),receiver_id:socialState.activeChat,body,image_url});if(error)toastSafe(error.message);else{input.value='';file.value='';await renderChatMessages();await loadSocialConversations();}}
+
+  async function loadBlocket1to1(){const box=$s('#blocket-feed');if(!box)return;const {data,error}=await supabase.from('mssrp_social_blocket').select('*').eq('sold',false).order('created_at',{ascending:false});if(error){box.innerHTML='<div class="mssrp-social-loading">Kunde inte läsa Blocket. Kör social-migrationen.</div>';return;}box.innerHTML=(data||[]).map(x=>`<article class="mssrp-blocket-card"><img class="mssrp-blocket-card-image" src="${esc(x.image_url||'')}" onerror="this.style.display='none'"><div class="mssrp-blocket-card-body"><div class="mssrp-blocket-price">${Number(x.price||0).toLocaleString('sv-SE')} kr</div><h3>${esc(x.title)}</h3><div class="mssrp-blocket-meta">${esc(x.category||'Övrigt')} · ${esc(x.location||'Malmö')}</div><p>${esc(x.description||'')}</p><div class="mssrp-blocket-actions"><button data-blocket-contact="${x.seller_id}">💬 Kontakta</button><button data-blocket-favorite="${x.id}">♡ Spara</button></div></div></article>`).join('')||'<div class="mssrp-social-loading">Inga annonser ännu.</div>';}
+  async function createBlocket(){if(!await requireSocialUser())return;const modal=document.createElement('div');modal.className='mssrp-social-compose-modal';modal.innerHTML=`<div class="mssrp-social-modal-backdrop"></div><div class="mssrp-social-compose-card"><button class="mssrp-social-modal-close">×</button><h2>Lägg upp på Blocket</h2><form id="blocket-form" class="mssrp-social-compose-form"><input name="title" placeholder="Vad säljer du?" required><div class="mssrp-form-grid-2"><input name="price" type="number" min="0" placeholder="Pris (kr)" required><select name="category"><option>Övrigt</option><option>Fordon</option><option>Elektronik</option><option>Kläder</option><option>Bostad</option></select></div><input name="location" placeholder="Plats" value="Malmö"><textarea name="description" placeholder="Beskriv varan…"></textarea><label class="mssrp-upload-box">🖼️ Lägg till bild<input name="image" type="file" accept="image/*" hidden></label><img class="mssrp-upload-preview hidden" id="blocket-preview"><button class="mssrp-social-primary">Publicera annons</button></form></div>`;document.body.appendChild(modal);modal.querySelector('.mssrp-social-modal-close').onclick=()=>modal.remove();modal.querySelector('.mssrp-social-modal-backdrop').onclick=()=>modal.remove();const f=modal.querySelector('input[type=file]');f.onchange=()=>{const i=modal.querySelector('#blocket-preview');if(f.files[0]){i.src=URL.createObjectURL(f.files[0]);i.classList.remove('hidden')}};modal.querySelector('form').onsubmit=async e=>{e.preventDefault();let image_url=null;if(f.files[0])image_url=await uploadSocialImage(f.files[0]);const v=e.target;const {error}=await supabase.from('mssrp_social_blocket').insert({seller_id:uid(),seller_name:name(),title:v.title.value,price:Number(v.price.value),category:v.category.value,location:v.location.value,description:v.description.value,image_url});if(error)toastSafe(error.message);else{modal.remove();toastSafe('Annonsen publicerades.');loadBlocket1to1();}};}
+
+  async function loadSocialProfile(){await loadSocialHeader();const box=$s('#social-profile-feed');if(!box||!uid())return;const {data}=await supabase.from('mssrp_social_posts').select('*').eq('author_id',uid()).order('created_at',{ascending:false});$s('#social-profile-post-count').textContent=`${data?.length||0} inlägg`;box.innerHTML='';for(const p of data||[])box.insertAdjacentHTML('beforeend',await renderSocialPost(p));}
+
+  document.addEventListener('click',async e=>{
+    const tab=e.target.closest('[data-social-view]');if(tab){setSocialView(tab.dataset.socialView);return;}
+    if(e.target.closest('[data-social-compose]')){createPost();return;}
+    const react=e.target.closest('[data-social-react]');if(react){const post=react.closest('[data-post-id]');if(post)toggleReaction(post.dataset.postId,react.dataset.socialReact);return;}
+    const comment=e.target.closest('[data-social-comment]');if(comment){const post=comment.closest('[data-post-id]');post?.querySelector('input[name=comment]')?.focus();return;}
+    const follow=e.target.closest('[data-follow-user]');if(follow){toggleFollow(follow.dataset.followUser);return;}
+    const conv=e.target.closest('[data-chat-user]');if(conv){openChat(conv.dataset.chatUser);return;}
+    if(e.target.closest('[data-blocket-create]')){createBlocket();return;}
+    const bc=e.target.closest('[data-blocket-contact]');if(bc){setSocialView('messages');setTimeout(()=>openChat(bc.dataset.blocketContact),100);return;}
   });
+  document.addEventListener('submit',e=>{const form=e.target;if(form.matches('.mssrp-comment-form')){e.preventDefault();const post=form.closest('[data-post-id]');if(post)submitComment(form,post.dataset.postId);}if(form.id==='social-chat-form')sendChat(e);});
+  $s('#social-message-search')?.addEventListener('input',e=>{$$('.mssrp-conversation').forEach(c=>c.style.display=c.textContent.toLowerCase().includes(e.target.value.toLowerCase())?'flex':'none')});
+  loadSocialHeader();loadSocialFeed();loadSuggestions();
 }
 
-function renderMssrpPhoneSmsApp() {
-  const body = $('#mssrp-phone-app-body'); if (!body) return;
-  const messages=(mssrpPhoneData.sms || []).slice(0,60);
-  body.innerHTML=`<div class="mssrp-phone-app-inner"><div class="mssrp-phone-section-title">Meddelanden</div><div class="mssrp-sms-list">${messages.length ? messages.map(m=>{const outgoing=m.sender_id===currentUser?.id; const number=outgoing?m.recipient_phone:m.sender_phone; const name=outgoing?m.recipient_name:m.sender_name; return `<article class="mssrp-sms-row ${outgoing?'outgoing':''}"><div><strong>${escapeHtml(name || mssrpPhoneFormatDisplay(number))}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(number))} · ${new Date(m.created_at).toLocaleString('sv-SE')}</small><p>${escapeHtml(m.body)}</p></div></article>`;}).join(''):'<div class="mssrp-phone-empty">Inga SMS ännu.</div>'}</div><form id="mssrp-sms-form" class="mssrp-phone-compose"><label>Telefonnummer<input id="mssrp-sms-number" required inputmode="tel" placeholder="070-123 45 67"></label><label>Meddelande<textarea id="mssrp-sms-body" required maxlength="1000" placeholder="Skriv ett meddelande…"></textarea></label><button class="mssrp-primary" type="submit">Skicka SMS</button></form></div>`;
-  $('#mssrp-sms-form')?.addEventListener('submit',async e=>{e.preventDefault();const number=$('#mssrp-sms-number').value.trim();const message=$('#mssrp-sms-body').value.trim();if(!number||!message)return;try{const{error}=await supabase.rpc('mssrp_send_sms',{p_recipient_phone:number,p_body:message});if(error)throw error;$('#mssrp-sms-body').value='';toast('SMS skickat.');await mssrpPhoneRefresh();}catch(error){toast(error.message||'SMS kunde inte skickas.');}});
-}
-
-function renderMssrpPhoneContactsApp() {
-  const body=$('#mssrp-phone-app-body'); if(!body)return;
-  const seen=new Map();
-  [...(mssrpPhoneData.sms||[]),...(mssrpPhoneData.calls||[])].forEach(x=>{const outgoing=x.sender_id===currentUser?.id||x.caller_id===currentUser?.id;const n=outgoing?(x.recipient_phone):(x.sender_phone||x.caller_phone);if(n&&!seen.has(n))seen.set(n,outgoing?(x.recipient_name):(x.sender_name||x.caller_name));});
-  body.innerHTML=`<div class="mssrp-phone-app-inner"><div class="mssrp-phone-section-title">Kontakter</div><div class="mssrp-phone-contacts">${seen.size?[...seen.entries()].map(([n,name])=>`<div class="mssrp-phone-contact"><span class="phone-contact-avatar">${escapeHtml((name||'?').slice(0,1).toUpperCase())}</span><span><strong>${escapeHtml(name||'Okänd')}</strong><small>${escapeHtml(mssrpPhoneFormatDisplay(n))}</small></span><button type="button" data-contact-call="${escapeHtml(n)}">☎</button><button type="button" data-contact-sms="${escapeHtml(n)}">SMS</button></div>`).join(''):'<div class="mssrp-phone-empty">Kontakter skapas automatiskt från dina samtal och SMS.</div>'}</div></div>`;
-  body.querySelectorAll('[data-contact-call]').forEach(b=>b.addEventListener('click',async()=>{try{const{error}=await supabase.rpc('mssrp_start_call',{p_recipient_phone:b.dataset.contactCall});if(error)throw error;toast('Ringer…');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}));
-  body.querySelectorAll('[data-contact-sms]').forEach(b=>b.addEventListener('click',()=>{renderMssrpPhoneApp('sms');setTimeout(()=>{const i=$('#mssrp-sms-number');if(i)i.value=b.dataset.contactSms;},0);}));
-}
-
-function bindMssrpPhoneEvents() {
-  const shell=$('#mssrp-phone-shell'); if(!shell || shell.dataset.bound==='1')return;
-  shell.dataset.bound='1';
-  shell.addEventListener('click',async event=>{
-    const app=event.target.closest('[data-phone-app]'); if(app){event.preventDefault();renderMssrpPhoneApp(app.dataset.phoneApp);return;}
-    const answer=event.target.closest('[data-phone-answer]'); if(answer){try{const{error}=await supabase.rpc('mssrp_update_call',{p_call_id:answer.dataset.phoneAnswer,p_status:'accepted'});if(error)throw error;toast('Samtal besvarat.');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}
-    const reject=event.target.closest('[data-phone-reject]'); if(reject){try{const{error}=await supabase.rpc('mssrp_update_call',{p_call_id:reject.dataset.phoneReject,p_status:'rejected'});if(error)throw error;toast('Samtalet avvisades.');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}
-    const end=event.target.closest('[data-phone-end]'); if(end){try{const{error}=await supabase.rpc('mssrp_update_call',{p_call_id:end.dataset.phoneEnd,p_status:'ended'});if(error)throw error;toast('Samtalet avslutades.');await mssrpPhoneRefresh();}catch(e){toast(e.message);}}
-  });
-}
-
-async function initMssrpPhone() {
-  if (!$('#mssrp-phone-shell')) return;
-  bindMssrpPhoneEvents();
-  if (!currentUser) return;
-  try {
-    const { data, error } = await supabase.rpc('mssrp_ensure_phone_number');
-    if (error) throw error;
-    mssrpPhoneData.phone_number = data?.phone_number || '';
-  } catch (error) { console.error('Phone setup failed:', error); }
-  document.querySelectorAll('[data-phone-open]').forEach(button => {
-    if (button.dataset.phoneBound === '1') return;
-    button.dataset.phoneBound = '1';
-    button.addEventListener('click', () => {
-      navigateToPortalPage('phone');
-      setTimeout(() => renderMssrpPhoneApp(button.dataset.phoneOpen || 'home'), 0);
-    });
-  });
-  renderMssrpPhoneHome();
-  await mssrpPhoneRefresh();
-  clearInterval(mssrpPhonePollTimer);
-  mssrpPhonePollTimer=setInterval(mssrpPhoneRefresh,3500);
-}
-
-function initMssrpSocialEconomy() {
-  ensureMssrpSocialUI();
-  addMssrpSwishButton();
-}
-
+setTimeout(initMssrpSocialOneToOne, 500);
 
 })();
