@@ -1665,15 +1665,22 @@ function ensurePasswordResetUI() {
       if (forgotMessage) forgotMessage.textContent = 'Skickar återställningslänk...';
 
       try {
+        // Supabase requires this redirect URL to be present in
+        // Authentication -> URL Configuration -> Redirect URLs.
         const redirectTo = `${window.location.origin}${window.location.pathname}?reset=password`;
-        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo
+        });
         if (error) throw error;
         if (forgotMessage) {
-          forgotMessage.textContent = 'Om kontot finns har en återställningslänk skickats till e-postadressen.';
+          forgotMessage.textContent = 'Återställningsbegäran skickad. Kontrollera inkorg och skräppost.';
         }
       } catch (error) {
         console.error('Password reset:', error);
-        if (forgotMessage) forgotMessage.textContent = 'Kunde inte skicka återställningslänken. Försök igen.';
+        const detail = error?.message || error?.error_description || error?.error || 'Okänt Supabase-fel';
+        if (forgotMessage) {
+          forgotMessage.textContent = `Kunde inte skicka återställningslänken: ${detail}`;
+        }
       } finally {
         if (button) button.disabled = false;
       }
@@ -8995,13 +9002,16 @@ function bindBankEvents() {
 
 function mssrpPayrollRoleCatalog() {
   return [
-    { name: 'Civil', salary: 0 },
-    { name: 'Polis', salary: 1500 },
-    { name: 'Polis - Aspirant', salary: 1000 },
-    { name: 'Dispatcher', salary: 1200 },
-    { name: 'FRI', salary: 1800 },
-    { name: 'NI', salary: 2000 },
-    { name: 'Admin', salary: 0 }
+    { name: 'Lön 1', salary: 500 },
+    { name: 'Lön 2', salary: 1000 },
+    { name: 'Lön 3', salary: 1500 },
+    { name: 'Lön 4', salary: 2000 },
+    { name: 'Lön 5', salary: 2500 },
+    { name: 'Lön 6', salary: 3000 },
+    { name: 'Lön 7', salary: 3500 },
+    { name: 'Lön 8', salary: 4000 },
+    { name: 'Lön 9', salary: 4500 },
+    { name: 'Lön 10', salary: 5000 }
   ];
 }
 
@@ -9090,8 +9100,16 @@ async function adminSetUserCash(userId, amount, description='Admin bankinsättni
     const current = Number(bankFirstValue(account,['balance','current_balance','available_balance','saldo','amount'],0)) || 0;
     balanceKey = balanceKey || 'balance';
     const patch = { [balanceKey]: current + value };
-    const { error } = await supabase.from(accounts.table).update(patch).eq('id', account.id);
-    if (error) throw error;
+    let updateQuery = supabase.from(accounts.table).update(patch);
+    if (account.id !== undefined && account.id !== null) {
+      updateQuery = updateQuery.eq('id', account.id);
+    } else {
+      const userKey = ['user_id','owner_id','profile_id','account_user_id','userid'].find(k => Object.prototype.hasOwnProperty.call(account,k));
+      if (!userKey) throw new Error('Bankkontot saknar id/user_id för uppdatering.');
+      updateQuery = updateQuery.eq(userKey, userId);
+    }
+    const { error } = await updateQuery;
+    if (error) throw new Error(`Kunde inte uppdatera bankkontot: ${error.message || error.details || 'okänt Supabase-fel'}`);
   }
 
   // Record the movement when the optional transaction table is available.
