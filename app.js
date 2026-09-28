@@ -9678,6 +9678,30 @@ function initMssrpSocialOneToOne() {
   }
 
   async function openChat(other) {const p=await profileFor(other);socialState.activeChat=other;$s('#social-chat-empty')?.classList.add('hidden');$s('#social-chat-active')?.classList.remove('hidden');$s('#social-chat-name').textContent=p.display_name||'Användare';$s('#social-chat-avatar').textContent=avatarLetter(p.display_name);await renderChatMessages();}
+
+  async function openNewMessagePicker() {
+    if (!await requireSocialUser()) return;
+    const {data,error}=await supabase.from('profiles').select('id,display_name,avatar_url').neq('id',uid()).order('display_name',{ascending:true}).limit(100);
+    if(error){toastSafe(error.message||'Kunde inte hämta användare.');return;}
+    const people=data||[];
+    const modal=document.createElement('div');
+    modal.className='mssrp-social-compose-modal';
+    modal.innerHTML=`<div class="mssrp-social-modal-backdrop"></div><div class="mssrp-social-compose-card mssrp-new-chat-card"><button type="button" class="mssrp-social-modal-close" aria-label="Stäng">×</button><h2>Nytt meddelande</h2><p>Välj vem du vill skriva till.</p><input type="search" class="mssrp-new-chat-search" placeholder="Sök användare…" aria-label="Sök användare"><div class="mssrp-new-chat-results"></div></div>`;
+    document.body.appendChild(modal);
+    const close=()=>modal.remove();
+    modal.querySelector('.mssrp-social-modal-close').addEventListener('click',close);
+    modal.querySelector('.mssrp-social-modal-backdrop').addEventListener('click',close);
+    const results=modal.querySelector('.mssrp-new-chat-results');
+    const render=filter=>{
+      const q=filter.trim().toLocaleLowerCase('sv');
+      const matches=people.filter(p=>(p.display_name||'Användare').toLocaleLowerCase('sv').includes(q));
+      results.innerHTML=matches.map(p=>`<button type="button" class="mssrp-new-chat-person" data-new-chat-user="${esc(p.id)}"><span class="mssrp-avatar">${esc(avatarLetter(p.display_name))}</span><span><strong>${esc(p.display_name||'Användare')}</strong><small>Starta konversation</small></span></button>`).join('')||'<p class="mssrp-new-chat-empty">Inga användare hittades.</p>';
+    };
+    render('');
+    modal.querySelector('.mssrp-new-chat-search').addEventListener('input',e=>render(e.target.value));
+    results.addEventListener('click',async e=>{const btn=e.target.closest('[data-new-chat-user]');if(!btn)return;const other=btn.dataset.newChatUser;close();setSocialView('messages');await openChat(other);});
+    modal.querySelector('.mssrp-new-chat-search').focus();
+  }
   async function renderChatMessages(){const box=$s('#social-chat-messages');if(!box||!socialState.activeChat)return;const {data}=await supabase.from('mssrp_social_messages').select('*').or(`and(sender_id.eq.${uid()},receiver_id.eq.${socialState.activeChat}),and(sender_id.eq.${socialState.activeChat},receiver_id.eq.${uid()})`).order('created_at',{ascending:true});box.innerHTML=(data||[]).map(m=>`<div class="mssrp-chat-bubble ${m.sender_id===uid()?'mine':'theirs'}">${m.image_url?`<img src="${esc(m.image_url)}">`:''}${m.body?`<div>${esc(m.body)}</div>`:''}<small>${new Date(m.created_at).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'})}</small></div>`).join('');box.scrollTop=box.scrollHeight;}
   async function sendChat(e){e.preventDefault();if(!socialState.activeChat||!await requireSocialUser())return;const input=$s('#social-chat-input'),file=$s('#social-chat-image');const body=input.value.trim();let image_url=null;if(file.files[0])image_url=await uploadSocialImage(file.files[0]);if(!body&&!image_url)return;const {error}=await supabase.from('mssrp_social_messages').insert({sender_id:uid(),receiver_id:socialState.activeChat,body,image_url});if(error)toastSafe(error.message);else{input.value='';file.value='';await renderChatMessages();await loadSocialConversations();}}
 
@@ -9689,6 +9713,7 @@ function initMssrpSocialOneToOne() {
   document.addEventListener('click',async e=>{
     const tab=e.target.closest('[data-social-view]');if(tab){setSocialView(tab.dataset.socialView);return;}
     if(e.target.closest('[data-social-compose]')){createPost();return;}
+    if(e.target.closest('[data-social-new-message]')){openNewMessagePicker();return;}
     const react=e.target.closest('[data-social-react]');if(react){const post=react.closest('[data-post-id]');if(post)toggleReaction(post.dataset.postId,react.dataset.socialReact);return;}
     const comment=e.target.closest('[data-social-comment]');if(comment){const post=comment.closest('[data-post-id]');post?.querySelector('input[name=comment]')?.focus();return;}
     const follow=e.target.closest('[data-follow-user]');if(follow){toggleFollow(follow.dataset.followUser);return;}
@@ -9702,5 +9727,59 @@ function initMssrpSocialOneToOne() {
 }
 
 setTimeout(initMssrpSocialOneToOne, 500);
+
+
+/* ============================================================
+   MSSRP PHONE — virtual Swedish-style numbers + WebRTC audio
+   Requires Supabase Realtime enabled and browser microphone permission.
+   ============================================================ */
+function initMssrpPhone() {
+  if (document.getElementById('mssrp-phone-root')) return;
+  const style = document.createElement('style');
+  style.textContent = `
+  #mssrp-phone-root{position:fixed;right:20px;bottom:20px;z-index:99990;font:14px system-ui;color:#172033}
+  #mssrp-phone-toggle{background:#16a34a;color:#fff;border:0;border-radius:999px;padding:13px 19px;font-weight:800;box-shadow:0 8px 28px #0003;cursor:pointer}
+  #mssrp-phone-panel{display:none;width:min(360px,calc(100vw - 28px));max-height:78vh;overflow:auto;background:#fff;border:1px solid #dce3ed;border-radius:20px;box-shadow:0 18px 55px #0003;margin-bottom:10px;padding:16px;box-sizing:border-box}
+  #mssrp-phone-panel.open{display:block}.mssrp-phone-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.mssrp-phone-head h3{margin:0;font-size:20px}.mssrp-phone-num{background:#f1f5f9;border-radius:12px;padding:10px;text-align:center;font-weight:700;margin:8px 0 12px}
+  #mssrp-phone-digits{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:20px;text-align:center;letter-spacing:1px}
+  .mssrp-phone-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}.mssrp-phone-pad button,.mssrp-phone-action{border:0;border-radius:10px;padding:12px;background:#eef2f7;font-weight:700;cursor:pointer}.mssrp-phone-call{background:#16a34a!important;color:white}.mssrp-phone-hang{background:#dc2626!important;color:white}.mssrp-phone-contact{display:flex;align-items:center;gap:9px;padding:10px 0;border-top:1px solid #e5eaf0}.mssrp-phone-contact-main{flex:1;min-width:0}.mssrp-phone-contact small{display:block;color:#64748b;margin-top:3px}.mssrp-phone-contact button{border:0;border-radius:999px;padding:8px 11px;background:#16a34a;color:white;font-weight:700;cursor:pointer}.mssrp-phone-status{padding:10px;border-radius:10px;background:#f1f5f9;margin:10px 0}.mssrp-phone-controls{display:flex;gap:8px}.mssrp-phone-controls button{flex:1}.mssrp-phone-hidden{display:none!important}
+  `;
+  document.head.appendChild(style);
+  const root = document.createElement('div'); root.id = 'mssrp-phone-root';
+  root.innerHTML = `<section id="mssrp-phone-panel"><div class="mssrp-phone-head"><h3>📞 Telefon</h3><button id="mssrp-phone-close" aria-label="Stäng">✕</button></div><div class="mssrp-phone-num">Ditt appnummer: <span id="mssrp-phone-own">Logga in</span></div><input id="mssrp-phone-digits" inputmode="tel" placeholder="Skriv nummer, t.ex. 0701234567" maxlength="15"><div class="mssrp-phone-pad">${['1','2','3','4','5','6','7','8','9','⌫','0','+'].map(k=>`<button type="button" data-phone-key="${k}">${k}</button>`).join('')}</div><button class="mssrp-phone-action mssrp-phone-call" id="mssrp-phone-dial" style="width:100%">📞 Ring nummer</button><div id="mssrp-phone-callbox" class="mssrp-phone-status mssrp-phone-hidden"><strong id="mssrp-phone-callstatus">Redo</strong><div class="mssrp-phone-controls" style="margin-top:10px"><button class="mssrp-phone-action" id="mssrp-phone-mute">🎙️ Mikrofon på</button><button class="mssrp-phone-action mssrp-phone-hang" id="mssrp-phone-hang">Lägg på</button></div></div><h4>Kontakter</h4><div id="mssrp-phone-contacts">Logga in för att se användare.</div><audio id="mssrp-phone-audio" autoplay playsinline></audio></section><button id="mssrp-phone-toggle">📞 Telefon</button>`;
+  document.body.appendChild(root);
+  const $p = s => root.querySelector(s);
+  let phoneChannel=null, pc=null, localStream=null, activePeer=null, muted=false, incoming=null;
+  const myId=()=>currentUser?.id||null;
+  const digits=$p('#mssrp-phone-digits');
+  function stableNumber(id){let h=2166136261;for(let i=0;i<id.length;i++){h^=id.charCodeAt(i);h=Math.imul(h,16777619)}const n=(Math.abs(h)>>>0)%10000000;const prefixes=['70','72','73','76','79'];const p=prefixes[(Math.abs(h)>>>0)%prefixes.length];const s=String(n).padStart(7,'0');return `+46 ${p} ${s.slice(0,3)} ${s.slice(3)}`;}
+  function normalizeNumber(v){let d=String(v||'').replace(/[^\d+]/g,'');if(d.startsWith('+46'))d='0'+d.slice(3);else if(d.startsWith('46'))d='0'+d.slice(2);return d;}
+  function showStatus(t){$p('#mssrp-phone-callbox').classList.remove('mssrp-phone-hidden');$p('#mssrp-phone-callstatus').textContent=t;}
+  async function signal(to,event,payload={}){if(!supabase||!myId())return;const ch=supabase.channel(`mssrp-phone-${to}`);await ch.subscribe();await ch.send({type:'broadcast',event,payload:{...payload,from:myId(),to}});supabase.removeChannel(ch);}
+  async function setupPeer(peerId){
+    if(!navigator.mediaDevices?.getUserMedia)throw new Error('Mikrofon stöds inte i denna webbläsare eller anslutning.');
+    localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+    pc.ontrack=e=>{$p('#mssrp-phone-audio').srcObject=e.streams[0];};
+    pc.onicecandidate=e=>{if(e.candidate)signal(peerId,'phone-ice',{candidate:e.candidate});};
+    pc.onconnectionstatechange=()=>{if(pc&&['connected','connecting'].includes(pc.connectionState))showStatus(pc.connectionState==='connected'?'Samtalet är anslutet':'Ansluter…');if(pc&&['failed','disconnected'].includes(pc.connectionState))showStatus('Anslutningen bröts.');};
+    activePeer=peerId;
+  }
+  async function startCall(peerId){try{if(!myId())return alert('Logga in för att ringa.');if(peerId===myId())return alert('Du kan inte ringa dig själv.');await setupPeer(peerId);const offer=await pc.createOffer();await pc.setLocalDescription(offer);await signal(peerId,'phone-offer',{sdp:offer,fromName:currentUser.user_metadata?.display_name||currentUser.email||'Användare'});showStatus('Ringer…');}catch(e){cleanup();alert('Kunde inte starta samtalet: '+e.message);}}
+  async function acceptCall(){if(!incoming)return;const call=incoming;incoming=null;try{await setupPeer(call.from);await pc.setRemoteDescription(new RTCSessionDescription(call.sdp));const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await signal(call.from,'phone-answer',{sdp:answer});showStatus('Samtalet ansluter…');}catch(e){cleanup();alert('Kunde inte svara: '+e.message);}}
+  function cleanup(){if(pc){pc.close();pc=null;}if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;}$p('#mssrp-phone-audio').srcObject=null;activePeer=null;muted=false;$p('#mssrp-phone-mute').textContent='🎙️ Mikrofon på';$p('#mssrp-phone-callbox').classList.add('mssrp-phone-hidden');}
+  async function listen(){if(!myId())return;if(phoneChannel)supabase.removeChannel(phoneChannel);phoneChannel=supabase.channel(`mssrp-phone-${myId()}`);phoneChannel.on('broadcast',{event:'phone-offer'},({payload})=>{if(!payload||payload.to!==myId())return;incoming=payload;showStatus(`Inkommande samtal från ${payload.fromName||'användare'}`);const yes=confirm(`Inkommande samtal från ${payload.fromName||'användare'}. Svara?`);if(yes)acceptCall();else{signal(payload.from,'phone-reject');cleanup();}}).on('broadcast',{event:'phone-answer'},async({payload})=>{if(payload?.to===myId()&&pc&&payload.sdp){await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));showStatus('Samtalet ansluter…');}}).on('broadcast',{event:'phone-ice'},async({payload})=>{if(payload?.to===myId()&&pc&&payload.candidate){try{await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));}catch(e){console.warn(e);}}}).on('broadcast',{event:'phone-hangup'},({payload})=>{if(payload?.to===myId()){cleanup();showStatus('Samtalet avslutades.');}}).on('broadcast',{event:'phone-reject'},({payload})=>{if(payload?.to===myId()){cleanup();showStatus('Samtalet avböjdes.');}}).subscribe();}
+  async function loadContacts(){const box=$p('#mssrp-phone-contacts');if(!myId()){box.textContent='Logga in för att se användare.';return;}$p('#mssrp-phone-own').textContent=stableNumber(myId());box.textContent='Laddar kontakter…';const {data,error}=await supabase.from('profiles').select('id,display_name,full_name').neq('id',myId()).limit(100);if(error){box.textContent='Kunde inte hämta kontakter från profiles-tabellen.';return;}box.innerHTML='';(data||[]).forEach(u=>{const name=u.display_name||u.full_name||'Användare';const row=document.createElement('div');row.className='mssrp-phone-contact';const main=document.createElement('div');main.className='mssrp-phone-contact-main';const strong=document.createElement('strong');strong.textContent=name;const small=document.createElement('small');small.textContent=stableNumber(u.id);main.append(strong,small);const btn=document.createElement('button');btn.textContent='📞 Ring';btn.onclick=()=>startCall(u.id);row.append(main,btn);box.append(row);});if(!data?.length)box.textContent='Inga andra användare hittades.';}
+  $p('#mssrp-phone-toggle').onclick=()=>{$p('#mssrp-phone-panel').classList.toggle('open');if($p('#mssrp-phone-panel').classList.contains('open')){loadContacts();listen();}};
+  $p('#mssrp-phone-close').onclick=()=>$p('#mssrp-phone-panel').classList.remove('open');
+  root.addEventListener('click',e=>{const b=e.target.closest('[data-phone-key]');if(!b)return;const k=b.dataset.phoneKey;if(k==='⌫')digits.value=digits.value.slice(0,-1);else digits.value+=k;});
+  $p('#mssrp-phone-dial').onclick=async()=>{const target=normalizeNumber(digits.value);if(!/^07\d{8}$/.test(target)&&!/^\+467\d{8}$/.test(digits.value.replace(/[\s-]/g,'')))return alert('Ange ett svenskt mobilnummer, t.ex. 0701234567. För att ringa i appen behöver numret vara kopplat till en användare.');const {data}=await supabase.from('profiles').select('id').limit(300);const match=(data||[]).find(u=>stableNumber(u.id).replace(/\s/g,'')===digits.value.replace(/\s/g,'')||stableNumber(u.id).replace('+46','0').replace(/\s/g,'')===target);if(match)startCall(match.id);else alert('Numret hittades inte bland appens användare.');};
+  $p('#mssrp-phone-mute').onclick=()=>{muted=!muted;(localStream?.getAudioTracks()||[]).forEach(t=>t.enabled=!muted);$p('#mssrp-phone-mute').textContent=muted?'🔇 Mikrofon av':'🎙️ Mikrofon på';};
+  $p('#mssrp-phone-hang').onclick=()=>{if(activePeer)signal(activePeer,'phone-hangup');cleanup();};
+  if(myId()){loadContacts();listen();}
+  supabase.auth.onAuthStateChange(()=>{setTimeout(()=>{if(myId()){loadContacts();listen();}else{cleanup();if(phoneChannel)supabase.removeChannel(phoneChannel);}},250);});
+}
+setTimeout(initMssrpPhone, 700);
 
 })();
