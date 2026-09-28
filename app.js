@@ -29,80 +29,100 @@ const supabase =
  * @param {string} receiverPhone - Mottagarens nummer
  * @param {number} amount - Belopp att överföra
  */
-async function sendSwish(senderPhone, receiverPhone, amount) {
+async function sendSwish(senderAccountId, receiverAccountId, amount) {
   try {
     const numAmount = Number(amount);
-    if (!senderPhone || !receiverPhone || numAmount <= 0) {
-      alert('Vänligen ange giltigt telefonnummer och belopp.');
+    const normalize = value => String(value ?? '').trim().toLowerCase();
+    if (!senderAccountId || !receiverAccountId || numAmount <= 0 || !Number.isFinite(numAmount)) {
+      alert('Ange giltiga konto-ID:n och ett belopp över 0 kr.');
+      return false;
+    }
+    if (normalize(senderAccountId) === normalize(receiverAccountId)) {
+      alert('Du kan inte skicka pengar till ditt eget konto.');
       return false;
     }
 
-    // 1. Hämta avsändarens konto
-    const { data: sender, error: senderErr } = await supabase
-      .from('bank_accounts')
-      .select('*')
-      .eq('phone_number', senderPhone)
-      .single();
+    // Find the user's bank-account table, supporting both schemas used by MSSRP.
+    let table = null;
+    let rows = [];
+    let lastError = null;
+    for (const candidate of ['bank_accounts', 'mssrp_bank_accounts']) {
+      const result = await supabase.from(candidate).select('*').limit(500);
+      if (!result.error) {
+        table = candidate;
+        rows = Array.isArray(result.data) ? result.data : [];
+        break;
+      }
+      lastError = result.error;
+    }
+    if (!table) throw lastError || new Error('Bankkontotabellen kunde inte hittas.');
 
-    if (senderErr || !sender) {
-      alert('Avsändarkontot hittades inte.');
+    const accountNumber = row => {
+      const stored = row.account_number ?? row.account_no ?? row.accountNumber ?? row.kontonummer;
+      if (stored) return String(stored);
+      const owner = row.user_id ?? row.owner_id ?? row.profile_id ?? row.account_user_id ?? row.userid;
+      return owner ? `MSSRP-${String(owner).replace(/-/g, '').slice(0, 10)}` : '';
+    };
+    const findByNumber = value => rows.find(row => normalize(accountNumber(row)) === normalize(value));
+    const sender = findByNumber(senderAccountId);
+    const receiver = findByNumber(receiverAccountId);
+    if (!sender) {
+      alert('Ditt konto kunde inte hittas. Kontrollera ditt konto-ID.');
+      return false;
+    }
+    if (!receiver) {
+      alert('Mottagarens konto-ID hittades inte. Kontrollera att det är korrekt.');
       return false;
     }
 
-    if (sender.balance < numAmount) {
+    const balanceKey = row => ['balance', 'current_balance', 'available_balance', 'saldo', 'amount'].find(key => Object.prototype.hasOwnProperty.call(row, key)) || 'balance';
+    const senderKey = balanceKey(sender);
+    const receiverKey = balanceKey(receiver);
+    const senderBalance = Number(sender[senderKey] || 0);
+    const receiverBalance = Number(receiver[receiverKey] || 0);
+    if (senderBalance < numAmount) {
       alert('Saldot räcker inte till.');
       return false;
     }
 
-    // 2. Hämta mottagarens konto
-    const { data: receiver, error: receiverErr } = await supabase
-      .from('bank_accounts')
-      .select('*')
-      .eq('phone_number', receiverPhone)
-      .single();
-
-    if (receiverErr || !receiver) {
-      alert('Mottagarens Swish-nummer hittades inte.');
+    const senderId = sender.id ?? sender.account_id;
+    const receiverId = receiver.id ?? receiver.account_id;
+    if (senderId == null || receiverId == null) {
+      alert('Kontona saknar konto-ID i databasen och överföringen kan inte genomföras.');
       return false;
     }
 
-    // 3. Dra pengar från avsändaren
-    const { error: deductErr } = await supabase
-      .from('bank_accounts')
-      .update({ balance: sender.balance - numAmount })
-      .eq('id', sender.id);
+    const { error: deductError } = await supabase.from(table).update({ [senderKey]: senderBalance - numAmount }).eq(sender.id != null ? 'id' : 'account_id', senderId);
+    if (deductError) throw deductError;
+    const { error: addError } = await supabase.from(table).update({ [receiverKey]: receiverBalance + numAmount }).eq(receiver.id != null ? 'id' : 'account_id', receiverId);
+    if (addError) {
+      // Roll back the debit if the credit fails.
+      await supabase.from(table).update({ [senderKey]: senderBalance }).eq(sender.id != null ? 'id' : 'account_id', senderId);
+      throw addError;
+    }
 
-    if (deductErr) throw deductErr;
-
-    // 4. Lägg till pengar hos mottagaren
-    const { error: addErr } = await supabase
-      .from('bank_accounts')
-      .update({ balance: receiver.balance + numAmount })
-      .eq('id', receiver.id);
-
-    if (addErr) throw addErr;
-
-    // 5. Spara transaktionshistorik
-    await supabase.from('transactions').insert([
-      {
-        sender_id: sender.id,
-        receiver_id: receiver.id,
+    for (const txTable of ['bank_transactions', 'mssrp_bank_transactions', 'transactions']) {
+      const tx = await supabase.from(txTable).insert({
+        sender_id: senderId,
+        receiver_id: receiverId,
+        sender_account_id: senderId,
+        receiver_account_id: receiverId,
         amount: numAmount,
-        type: 'swish',
-        created_at: new Date()
-      }
-    ]);
+        type: 'transfer',
+        description: `Överföring till ${receiverAccountId}`,
+        created_at: new Date().toISOString()
+      });
+      if (!tx.error) break;
+    }
 
-    alert(`Swish på ${numAmount} kr skickat till ${receiverPhone}!`);
+    alert(`${numAmount.toLocaleString('sv-SE')} kr skickat till ${receiverAccountId}!`);
     return true;
-
   } catch (err) {
-    console.error('Fel vid Swish-överföring:', err.message);
-    alert('Ett fel uppstod vid Swish-betalningen: ' + err.message);
+    console.error('Fel vid kontoöverföring:', err?.message || err);
+    alert('Överföringen misslyckades: ' + (err?.message || 'okänt fel'));
     return false;
   }
 }
-
 // ==========================================
 // 3. LÖNEHANTERING (PAYROLL)
 // ==========================================
@@ -9208,8 +9228,8 @@ function ensureSwishTransferUI() {
     <section class="mssrp-swish-dialog" role="dialog" aria-modal="true" aria-labelledby="mssrp-swish-title">
       <div class="mssrp-swish-head"><div class="mssrp-swish-brand"><span class="mssrp-swish-mark">↗</span><span id="mssrp-swish-title">Swish</span></div><button type="button" class="mssrp-swish-close" aria-label="Stäng">×</button></div>
       <form id="mssrp-swish-transfer-form">
-        <label class="mssrp-swish-field"><span>Ditt telefonnummer</span><input id="mssrp-swish-sender" type="tel" autocomplete="tel" placeholder="07X XXX XX XX" required></label>
-        <label class="mssrp-swish-field"><span>Mottagarens telefonnummer</span><input id="mssrp-swish-recipient" type="tel" autocomplete="off" placeholder="07X XXX XX XX" required></label>
+        <label class="mssrp-swish-field"><span>Ditt konto-ID</span><input id="mssrp-swish-sender" type="text" autocomplete="off" placeholder="MSSRP-…" readonly required></label>
+        <label class="mssrp-swish-field"><span>Mottagarens konto-ID</span><input id="mssrp-swish-recipient" type="text" autocomplete="off" placeholder="MSSRP-…" required></label>
         <label class="mssrp-swish-field"><span>Belopp (kr)</span><input id="mssrp-swish-amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0,00" required></label>
         <button class="mssrp-swish-submit" id="mssrp-swish-submit" type="submit">Granska och skicka</button>
         <p class="mssrp-swish-note">Detta är en intern överföring i appen, inte en riktig Swish-betalning. Kontrollera mottagare och belopp innan du skickar.</p>
@@ -9218,8 +9238,8 @@ function ensureSwishTransferUI() {
   document.body.appendChild(overlay);
 
   const senderInput = overlay.querySelector('#mssrp-swish-sender');
-  const profilePhone = bankFirstValue(currentUser, ['phone_number', 'phone', 'phoneNumber'], '');
-  senderInput.value = profilePhone || '';
+  const profileAccountId = document.querySelector('#bank-account-number')?.textContent?.trim() || (currentUser?.id ? formatBankAccountNumber(null, currentUser.id) : '');
+  senderInput.value = profileAccountId;
   const close = () => overlay.classList.remove('is-open');
   card.querySelector('#mssrp-swish-launcher').addEventListener('click', () => {
     overlay.classList.add('is-open');
@@ -9230,23 +9250,23 @@ function ensureSwishTransferUI() {
   document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
   overlay.querySelector('#mssrp-swish-transfer-form').addEventListener('submit', async event => {
     event.preventDefault();
-    const senderPhone = senderInput.value.trim();
-    const receiverPhone = overlay.querySelector('#mssrp-swish-recipient').value.trim();
+    const senderAccountId = senderInput.value.trim();
+    const receiverAccountId = overlay.querySelector('#mssrp-swish-recipient').value.trim();
     const amount = Number(overlay.querySelector('#mssrp-swish-amount').value);
-    if (!senderPhone || !receiverPhone || !Number.isFinite(amount) || amount <= 0) {
-      alert('Ange giltiga telefonnummer och ett belopp över 0 kr.');
+    if (!senderAccountId || !receiverAccountId || !Number.isFinite(amount) || amount <= 0) {
+      alert('Ange giltiga konto-ID:n och ett belopp över 0 kr.');
       return;
     }
     const formatted = formatBankSEK(amount);
-    if (!confirm(`Skicka ${formatted} till ${receiverPhone}?`)) return;
+    if (!confirm(`Skicka ${formatted} till konto ${receiverAccountId}?`)) return;
     const submit = overlay.querySelector('#mssrp-swish-submit');
     submit.disabled = true;
     submit.textContent = 'Skickar…';
     try {
-      const success = await sendSwish(senderPhone, receiverPhone, amount);
+      const success = await sendSwish(senderAccountId, receiverAccountId, amount);
       if (success) {
         overlay.querySelector('#mssrp-swish-transfer-form').reset();
-        senderInput.value = profilePhone || '';
+        senderInput.value = profileAccountId;
         close();
         await loadMssrpBank();
       }
