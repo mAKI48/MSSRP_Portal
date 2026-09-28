@@ -29,19 +29,14 @@ const supabase =
  * @param {string} receiverPhone - Mottagarens nummer
  * @param {number} amount - Belopp att överföra
  */
-async function sendSwish(senderAccountId, receiverAccountId, amount) {
+async function sendSwish(receiverAccountId, amount) {
   try {
     const numAmount = Number(amount);
     const normalize = value => String(value ?? '').trim().toLowerCase();
-    if (!senderAccountId || !receiverAccountId || numAmount <= 0 || !Number.isFinite(numAmount)) {
-      alert('Ange giltiga konto-ID:n och ett belopp över 0 kr.');
+    if (!receiverAccountId || numAmount <= 0 || !Number.isFinite(numAmount)) {
+      alert('Ange mottagarens konto-ID och ett belopp över 0 kr.');
       return false;
     }
-    if (normalize(senderAccountId) === normalize(receiverAccountId)) {
-      alert('Du kan inte skicka pengar till ditt eget konto.');
-      return false;
-    }
-
     // Find the user's bank-account table, supporting both schemas used by MSSRP.
     let table = null;
     let rows = [];
@@ -64,14 +59,21 @@ async function sendSwish(senderAccountId, receiverAccountId, amount) {
       return owner ? `MSSRP-${String(owner).replace(/-/g, '').slice(0, 10)}` : '';
     };
     const findByNumber = value => rows.find(row => normalize(accountNumber(row)) === normalize(value));
-    const sender = findByNumber(senderAccountId);
+    const currentUserId = currentUser?.id;
+    const sender = rows.find(row => [row.user_id, row.owner_id, row.profile_id, row.account_user_id, row.userid].some(value => value != null && String(value) === String(currentUserId)))
+      || findByNumber(document.querySelector('#bank-account-number')?.textContent?.trim() || (currentUserId ? formatBankAccountNumber(null, currentUserId) : ''));
     const receiver = findByNumber(receiverAccountId);
     if (!sender) {
-      alert('Ditt konto kunde inte hittas. Kontrollera ditt konto-ID.');
+      alert('Ditt bankkonto kunde inte hittas för ditt inloggade konto.');
       return false;
     }
     if (!receiver) {
       alert('Mottagarens konto-ID hittades inte. Kontrollera att det är korrekt.');
+      return false;
+    }
+
+    if (sender === receiver) {
+      alert('Du kan inte skicka pengar till ditt eget konto.');
       return false;
     }
 
@@ -9228,7 +9230,6 @@ function ensureSwishTransferUI() {
     <section class="mssrp-swish-dialog" role="dialog" aria-modal="true" aria-labelledby="mssrp-swish-title">
       <div class="mssrp-swish-head"><div class="mssrp-swish-brand"><span class="mssrp-swish-mark">↗</span><span id="mssrp-swish-title">Swish</span></div><button type="button" class="mssrp-swish-close" aria-label="Stäng">×</button></div>
       <form id="mssrp-swish-transfer-form">
-        <label class="mssrp-swish-field"><span>Ditt konto-ID</span><input id="mssrp-swish-sender" type="text" autocomplete="off" placeholder="MSSRP-…" readonly required></label>
         <label class="mssrp-swish-field"><span>Mottagarens konto-ID</span><input id="mssrp-swish-recipient" type="text" autocomplete="off" placeholder="MSSRP-…" required></label>
         <label class="mssrp-swish-field"><span>Belopp (kr)</span><input id="mssrp-swish-amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0,00" required></label>
         <button class="mssrp-swish-submit" id="mssrp-swish-submit" type="submit">Granska och skicka</button>
@@ -9237,24 +9238,20 @@ function ensureSwishTransferUI() {
     </section>`;
   document.body.appendChild(overlay);
 
-  const senderInput = overlay.querySelector('#mssrp-swish-sender');
-  const profileAccountId = document.querySelector('#bank-account-number')?.textContent?.trim() || (currentUser?.id ? formatBankAccountNumber(null, currentUser.id) : '');
-  senderInput.value = profileAccountId;
   const close = () => overlay.classList.remove('is-open');
   card.querySelector('#mssrp-swish-launcher').addEventListener('click', () => {
     overlay.classList.add('is-open');
-    setTimeout(() => (senderInput.value ? overlay.querySelector('#mssrp-swish-recipient') : senderInput).focus(), 0);
+    setTimeout(() => overlay.querySelector('#mssrp-swish-recipient').focus(), 0);
   });
   overlay.querySelector('.mssrp-swish-close').addEventListener('click', close);
   overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
   overlay.querySelector('#mssrp-swish-transfer-form').addEventListener('submit', async event => {
     event.preventDefault();
-    const senderAccountId = senderInput.value.trim();
     const receiverAccountId = overlay.querySelector('#mssrp-swish-recipient').value.trim();
     const amount = Number(overlay.querySelector('#mssrp-swish-amount').value);
-    if (!senderAccountId || !receiverAccountId || !Number.isFinite(amount) || amount <= 0) {
-      alert('Ange giltiga konto-ID:n och ett belopp över 0 kr.');
+    if (!receiverAccountId || !Number.isFinite(amount) || amount <= 0) {
+      alert('Ange mottagarens konto-ID och ett belopp över 0 kr.');
       return;
     }
     const formatted = formatBankSEK(amount);
@@ -9263,10 +9260,9 @@ function ensureSwishTransferUI() {
     submit.disabled = true;
     submit.textContent = 'Skickar…';
     try {
-      const success = await sendSwish(senderAccountId, receiverAccountId, amount);
+      const success = await sendSwish(receiverAccountId, amount);
       if (success) {
         overlay.querySelector('#mssrp-swish-transfer-form').reset();
-        senderInput.value = profileAccountId;
         close();
         await loadMssrpBank();
       }
