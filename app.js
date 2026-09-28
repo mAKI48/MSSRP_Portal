@@ -8549,12 +8549,380 @@ function updateAuthModal() {
    INITIALIZATION
    ============================================================ */
 
+/* ============================================================
+   MSSRP BANK
+   The Bank page exists in index.html, but the original app.js
+   did not contain any bank loader or event handlers.
+   This module loads the bank data from Supabase and maps common
+   MSSRP bank/payroll column names to the existing HTML fields.
+   ============================================================ */
+
+const MSSRP_BANK_TABLES = {
+  accounts: ['bank_accounts', 'mssrp_bank_accounts'],
+  transactions: ['bank_transactions', 'mssrp_bank_transactions'],
+  payroll: ['user_payroll', 'bank_payroll', 'payroll_assignments', 'mssrp_payroll']
+};
+
+let mssrpBankTableCache = {};
+
+function bankFirstValue(row, keys, fallback = null) {
+  if (!row || typeof row !== 'object') return fallback;
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+      return row[key];
+    }
+  }
+  return fallback;
+}
+
+function bankMatchesUser(row, userId) {
+  if (!row || !userId) return false;
+  return [
+    row.user_id,
+    row.owner_id,
+    row.profile_id,
+    row.account_user_id,
+    row.userid
+  ].some(value => value === userId);
+}
+
+function bankMatchesAccount(row, accountId, accountNumber) {
+  if (!row) return false;
+  if (accountId && [
+    row.account_id,
+    row.bank_account_id,
+    row.accountId
+  ].some(value => value === accountId)) return true;
+  if (accountNumber && [
+    row.account_number,
+    row.account_no,
+    row.accountNumber,
+    row.kontonummer
+  ].some(value => String(value) === String(accountNumber))) return true;
+  return false;
+}
+
+async function bankReadCandidate(table, userId) {
+  try {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .limit(250);
+
+    if (error) return { ok: false, table, error };
+
+    const rows = Array.isArray(data) ? data : [];
+    const userRows = userId
+      ? rows.filter(row => bankMatchesUser(row, userId))
+      : rows;
+
+    return { ok: true, table, rows, userRows };
+  } catch (error) {
+    return { ok: false, table, error };
+  }
+}
+
+async function bankFindUserRows(kind, userId) {
+  const cached = mssrpBankTableCache[kind];
+
+  if (cached) {
+    const result = await bankReadCandidate(cached, userId);
+    if (result.ok) return result;
+    delete mssrpBankTableCache[kind];
+  }
+
+  let lastError = null;
+
+  for (const table of MSSRP_BANK_TABLES[kind] || []) {
+    const result = await bankReadCandidate(table, userId);
+    if (result.ok) {
+      mssrpBankTableCache[kind] = table;
+      return result;
+    }
+    lastError = result.error;
+  }
+
+  return {
+    ok: false,
+    table: null,
+    rows: [],
+    userRows: [],
+    error: lastError || new Error(`Ingen ${kind}-tabell hittades.`)
+  };
+}
+
+function formatBankSEK(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '0 kr';
+  return new Intl.NumberFormat('sv-SE', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(amount) + ' kr';
+}
+
+function formatBankAccountNumber(value, userId) {
+  if (value) return String(value);
+  if (!userId) return '—';
+
+  // Display-only fallback so the page never stays blank if the
+  // database account-number column is not populated.
+  const compact = String(userId).replace(/-/g, '').slice(0, 10);
+  return compact ? `MSSRP-${compact}` : '—';
+}
+
+function formatBankDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('sv-SE', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  });
+}
+
+function setBankText(selector, value) {
+  const element = $(selector);
+  if (element) element.textContent = value;
+}
+
+function renderBankTransactions(rows, account) {
+  const list = $('#bank-transactions-list');
+  if (!list) return;
+
+  const accountId = bankFirstValue(account, ['id', 'account_id']);
+  const accountNumber = bankFirstValue(account, [
+    'account_number',
+    'account_no',
+    'accountNumber',
+    'kontonummer'
+  ]);
+
+  const filtered = (rows || [])
+    .filter(row => {
+      if (!accountId && !accountNumber) return true;
+      return bankMatchesAccount(row, accountId, accountNumber) || bankMatchesUser(row, currentUser?.id);
+    })
+    .sort((a, b) => {
+      const da = new Date(bankFirstValue(a, ['created_at', 'date', 'transaction_date', 'timestamp'], 0)).getTime();
+      const db = new Date(bankFirstValue(b, ['created_at', 'date', 'transaction_date', 'timestamp'], 0)).getTime();
+      return db - da;
+    })
+    .slice(0, 20);
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="mssrp-bank-loading">Inga bankhändelser ännu.</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(row => {
+    const description = bankFirstValue(row, [
+      'description',
+      'title',
+      'message',
+      'reason',
+      'reference',
+      'type'
+    ], 'Bankhändelse');
+
+    const amount = bankFirstValue(row, [
+      'amount',
+      'value',
+      'sum',
+      'belopp'
+    ], 0);
+
+    const date = bankFirstValue(row, [
+      'created_at',
+      'date',
+      'transaction_date',
+      'timestamp'
+    ]);
+
+    const numericAmount = Number(amount);
+    const amountText = Number.isFinite(numericAmount)
+      ? `${numericAmount >= 0 ? '+' : ''}${formatBankSEK(numericAmount)}`
+      : String(amount ?? '—');
+
+    const rowClass = numericAmount >= 0 ? 'is-credit' : 'is-debit';
+
+    return `
+      <div class="mssrp-bank-transaction ${rowClass}">
+        <div>
+          <strong>${escapeHtml(String(description))}</strong>
+          <small>${escapeHtml(formatBankDate(date))}</small>
+        </div>
+        <b>${escapeHtml(amountText)}</b>
+      </div>
+    `;
+  }).join('');
+}
+
+async function loadMssrpBank() {
+  const page = $('#bank');
+  if (!page) return;
+
+  if (!currentUser?.id) {
+    setBankText('#bank-user-name', 'Inte inloggad');
+    setBankText('#bank-role-line', 'Logga in för att läsa ditt bankkonto.');
+    setBankText('#bank-balance', '—');
+    setBankText('#bank-payroll-role', '—');
+    setBankText('#bank-paycheck', '—');
+    setBankText('#bank-next-payday', '—');
+    setBankText('#bank-account-number', '—');
+
+    const list = $('#bank-transactions-list');
+    if (list) list.innerHTML = '<div class="mssrp-bank-loading">Logga in för att läsa bankhändelser.</div>';
+    return;
+  }
+
+  setBankText(
+    '#bank-user-name',
+    currentUser.user_metadata?.display_name ||
+    currentUser.user_metadata?.full_name ||
+    currentUser.email?.split('@')[0] ||
+    'MSSRP-användare'
+  );
+
+  const list = $('#bank-transactions-list');
+  if (list) list.innerHTML = '<div class="mssrp-bank-loading">Laddar bankhändelser…</div>';
+
+  try {
+    const [accountsResult, payrollResult, transactionsResult] = await Promise.all([
+      bankFindUserRows('accounts', currentUser.id),
+      bankFindUserRows('payroll', currentUser.id),
+      bankFindUserRows('transactions', currentUser.id)
+    ]);
+
+    /*
+      Accounts
+    */
+    if (!accountsResult.ok) {
+      throw new Error(
+        'Bankkontot kunde inte läsas från Supabase. ' +
+        'Kontrollera att bank_accounts eller mssrp_bank_accounts finns och att RLS tillåter användaren att läsa sitt konto.'
+      );
+    }
+
+    const account = accountsResult.userRows[0] || null;
+
+    if (!account) {
+      setBankText('#bank-balance', '0 kr');
+      setBankText('#bank-account-number', formatBankAccountNumber(null, currentUser.id));
+    } else {
+      const balance = bankFirstValue(account, [
+        'balance',
+        'current_balance',
+        'available_balance',
+        'saldo',
+        'amount'
+      ], 0);
+
+      const accountNumber = bankFirstValue(account, [
+        'account_number',
+        'account_no',
+        'accountNumber',
+        'kontonummer'
+      ]);
+
+      setBankText('#bank-balance', formatBankSEK(balance));
+      setBankText('#bank-account-number', formatBankAccountNumber(accountNumber, currentUser.id));
+    }
+
+    /*
+      Payroll
+    */
+    const payroll = payrollResult.ok ? (payrollResult.userRows[0] || null) : null;
+
+    const payrollRole = bankFirstValue(payroll, [
+      'role_name',
+      'payroll_role',
+      'salary_class',
+      'pay_class',
+      'loneklass',
+      'role'
+    ], 'Civil');
+
+    const paycheck = bankFirstValue(payroll, [
+      'daily_salary',
+      'daily_pay',
+      'salary',
+      'paycheck',
+      'amount',
+      'lön',
+      'lon'
+    ], 0);
+
+    setBankText('#bank-payroll-role', String(payrollRole));
+    setBankText('#bank-role-line', `Löneklass: ${payrollRole}`);
+    setBankText('#bank-paycheck', formatBankSEK(paycheck));
+
+    const nextPayday = bankFirstValue(payroll, [
+      'next_payday',
+      'next_payment',
+      'next_salary_at'
+    ]);
+
+    if (nextPayday) {
+      setBankText('#bank-next-payday', formatBankDate(nextPayday));
+    } else {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(12, 0, 0, 0);
+      setBankText('#bank-next-payday', tomorrow.toLocaleDateString('sv-SE'));
+    }
+
+    /*
+      Transactions
+    */
+    renderBankTransactions(
+      transactionsResult.ok ? transactionsResult.rows : [],
+      account
+    );
+
+    if (!transactionsResult.ok) {
+      const transactionList = $('#bank-transactions-list');
+      if (transactionList) {
+        transactionList.innerHTML =
+          '<div class="mssrp-bank-loading">Kontot laddades, men transaktionstabellen kunde inte läsas.</div>';
+      }
+    }
+
+  } catch (error) {
+    console.error('MSSRP Bank load failed:', error);
+
+    setBankText('#bank-balance', '—');
+    setBankText('#bank-role-line', 'Banken kunde inte laddas.');
+
+    if (list) {
+      list.innerHTML = `
+        <div class="mssrp-bank-loading">
+          Kunde inte ladda banken.<br>
+          <small>${escapeHtml(error.message || 'Okänt fel')}</small>
+        </div>
+      `;
+    }
+  }
+}
+
+function bindBankEvents() {
+  $('#bank-refresh')?.addEventListener('click', () => {
+    loadMssrpBank();
+  });
+
+  $('[data-bank-nav]')?.addEventListener('click', () => {
+    // Wait one tick so auth/navigation state has settled.
+    setTimeout(loadMssrpBank, 0);
+  });
+}
+
+
 async function init() {
 
   ensurePasswordResetUI();
   bindPasswordRecoveryListener();
   bindEvents();
   bindPortalEvents();
+  bindBankEvents();
   initPortalTabs();
 
   updateAuthModal();
@@ -8580,6 +8948,7 @@ async function init() {
 
   await checkAuth();
   await loadAccessProfile();
+  await loadMssrpBank();
   await checkPasswordRecovery();
 
   setTool(
