@@ -113,9 +113,8 @@
         <nav class="mssrp-nav" aria-label="Huvudmeny">
           <a href="#home" data-home>Hem</a>
           <a href="#shop">Shop</a>
-          <a href="#bank" data-bank-nav>Bank</a>
-          <a href="#phone" data-phone-nav>Telefon</a>
           <a href="#social" data-mssrp-social-nav>Social</a>
+      <a href="#bank" data-bank-nav>Bank</a>
           <a href="#services">Funktioner</a>
           <a href="#roleplay" data-feature="roleplay_system">Rollspelssystem</a>
           <a href="#tactical" data-feature="tactical_plan">Taktisk plan</a>
@@ -193,77 +192,86 @@
 
       
 
-      <section class="mssrp-section mssrp-portal-page mssrp-social-section" id="social" data-portal-page="social" data-feature-section="social">
-        <div class="mssrp-section-title">
-          <div class="mssrp-kicker">SOCIAL & MARKNAD</div>
-          <h2>MSSRP Social</h2>
-          <p>Kommunicera, köp och sälj och använd Darkweb om din roll har behörighet.</p>
-        </div>
-        <div class="mssrp-social-grid">
-          <button type="button" class="mssrp-social-card" data-social-platform="facebook">
-            <span class="social-icon facebook">f</span>
-            <span><strong>Facebook</strong><small>Publicera inlägg och gilla andra.</small></span>
-          </button>
-          <button type="button" class="mssrp-social-card" data-social-platform="blocket">
-            <span class="social-icon blocket">B</span>
-            <span><strong>Blocket</strong><small>Sälj och köp med ditt MSSRP-bankkonto.</small></span>
-          </button>
-          <button type="button" class="mssrp-social-card restricted" data-social-platform="darkweb">
-            <span class="social-icon darkweb">◉</span>
-            <span><strong>Darkweb</strong><small>Endast användare med Darkweb-behörighet.</small></span>
-          </button>
+      
+      <section class="mssrp-section mssrp-portal-page mssrp-social-page" id="social" data-portal-page="social">
+        <div class="mssrp-social-shell">
+          <div class="mssrp-social-topbar">
+            <div>
+              <span class="mssrp-social-kicker">MSSRP SOCIAL</span>
+              <h2>Socialt</h2>
+              <p>En komplett RP-plattform för inlägg, meddelanden, följare, bilder och marknadsplats.</p>
+            </div>
+            <div class="mssrp-social-account" id="social-current-user">Inte inloggad</div>
+          </div>
+          <div class="mssrp-social-tabs" role="tablist">
+            <button class="mssrp-social-tab active" data-social-view="facebook">Facebook</button>
+            <button class="mssrp-social-tab" data-social-view="messages">Messenger</button>
+            <button class="mssrp-social-tab" data-social-view="blocket">Blocket</button>
+            <button class="mssrp-social-tab" data-social-view="profile">Profil</button>
+          </div>
+
+          <div class="mssrp-social-view" id="social-facebook-view">
+            <div class="mssrp-social-grid">
+              <aside class="mssrp-social-side">
+                <div class="mssrp-fb-profile-card">
+                  <div class="mssrp-avatar big" id="social-my-avatar">M</div>
+                  <strong id="social-my-name">Din profil</strong>
+                  <span id="social-my-handle">@mssrp</span>
+                  <div class="mssrp-profile-stats"><b id="social-follower-count">0</b><small>följare</small><b id="social-following-count">0</b><small>följer</small></div>
+                </div>
+                <button class="mssrp-social-side-btn" data-social-compose="post">＋ Skapa inlägg</button>
+                <button class="mssrp-social-side-btn" data-social-view="profile">👤 Min profil</button>
+                <button class="mssrp-social-side-btn" data-social-view="messages">💬 Meddelanden</button>
+              </aside>
+              <main>
+                <div class="mssrp-fb-composer" data-social-compose="post">
+                  <div class="mssrp-avatar" id="social-composer-avatar">M</div>
+                  <div class="mssrp-composer-main"><button type="button" class="mssrp-composer-placeholder">Vad tänker du på?</button><div class="mssrp-composer-actions"><button data-social-compose="post">📝 Inlägg</button><button data-social-compose="photo">🖼️ Foto/video</button></div></div>
+                </div>
+                <div id="social-feed" class="mssrp-fb-feed"><div class="mssrp-social-loading">Laddar flödet…</div></div>
+              </main>
+              <aside class="mssrp-social-right">
+                <div class="mssrp-social-panel"><h3>Personer du kanske känner</h3><div id="social-suggestions">Laddar…</div></div>
+                <div class="mssrp-social-panel"><h3>Aktivitet</h3><p>Följ personer, reagera på inlägg och starta konversationer direkt från flödet.</p></div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="mssrp-social-view hidden" id="social-messages-view">
+            <div class="mssrp-messenger-layout">
+              <aside class="mssrp-messenger-list"><div class="mssrp-messenger-title"><strong>Meddelanden</strong><button data-social-new-message>＋</button></div><input id="social-message-search" placeholder="Sök personer…"><div id="social-conversations"></div></aside>
+              <main class="mssrp-chat"><div class="mssrp-chat-empty" id="social-chat-empty">Välj en konversation</div><div id="social-chat-active" class="hidden"><div class="mssrp-chat-header"><div class="mssrp-avatar" id="social-chat-avatar">?</div><div><strong id="social-chat-name">Person</strong><small id="social-chat-status">MSSRP Messenger</small></div></div><div id="social-chat-messages" class="mssrp-chat-messages"></div><form id="social-chat-form" class="mssrp-chat-form"><input id="social-chat-input" placeholder="Skriv ett meddelande…" autocomplete="off"><label class="mssrp-image-button">🖼️<input id="social-chat-image" type="file" accept="image/*" hidden></label><button>Skicka</button></form></div></main>
+            </div>
+          </div>
+
+          <div class="mssrp-social-view hidden" id="social-blocket-view">
+            <div class="mssrp-blocket-head"><div><span>MARKNADSPLATS</span><h2>Blocket</h2><p>Köp och sälj saker med andra personer i Malmö Skåne.</p></div><button class="mssrp-social-primary" data-blocket-create>＋ Lägg upp annons</button></div>
+            <div class="mssrp-blocket-toolbar"><input id="blocket-search" placeholder="Sök bland annonser…"><select id="blocket-category"><option value="">Alla kategorier</option><option>Fordon</option><option>Elektronik</option><option>Kläder</option><option>Bostad</option><option>Övrigt</option></select></div>
+            <div id="blocket-feed" class="mssrp-blocket-grid"><div class="mssrp-social-loading">Laddar annonser…</div></div>
+          </div>
+
+          <div class="mssrp-social-view hidden" id="social-profile-view">
+            <div class="mssrp-profile-page"><div class="mssrp-profile-cover"></div><div class="mssrp-profile-main"><div class="mssrp-avatar profile" id="social-profile-avatar">M</div><div><h2 id="social-profile-name">Din profil</h2><p id="social-profile-handle">@mssrp</p></div><div class="mssrp-profile-actions"><button data-social-edit-profile>Redigera profil</button></div></div><div class="mssrp-profile-bio" id="social-profile-bio">Ingen presentation ännu.</div><div class="mssrp-profile-tabs"><button class="active">Inlägg</button><span id="social-profile-post-count">0 inlägg</span></div><div id="social-profile-feed" class="mssrp-fb-feed"></div></div>
+          </div>
         </div>
       </section>
 
-      <section class="mssrp-section mssrp-portal-page mssrp-bank-page" id="bank" data-portal-page="bank">
+<section class="mssrp-section mssrp-portal-page mssrp-bank-page" id="bank" data-portal-page="bank">
         <div class="mssrp-bank-shell">
           <div class="mssrp-bank-topbar">
-            <div class="mssrp-bank-brand"><span class="mssrp-bank-mark"><span>✦</span></span><div><strong>Swedbank</strong><small>PERSONLIG BANK • MSSRP ROLLSPEL</small></div></div>
+            <div class="mssrp-bank-brand"><span class="mssrp-bank-mark">M</span><div><strong>MSSRP BANK</strong><small>PERSONLIG BANK • ROLLSPEL</small></div></div>
             <div class="mssrp-bank-user"><span class="mssrp-bank-online-dot"></span><span id="bank-user-name">—</span></div>
           </div>
-          <div class="mssrp-bank-notice">Swedbank används här som RP-bank i MSSRP. Detta är en fiktiv rollspelsfunktion och inte en riktig banktjänst.</div>
+          <div class="mssrp-bank-notice">Detta är en fiktiv banktjänst för MSSRP-rollspel och är inte kopplad till någon riktig bank.</div>
           <div class="mssrp-bank-hero">
             <div><span class="mssrp-bank-eyebrow">ÖVERSIKT</span><h2>Välkommen tillbaka</h2><p id="bank-role-line">Löneklass hämtas…</p></div>
             <div class="mssrp-bank-balance"><span>DISPONIBELT SALDO</span><strong id="bank-balance">—</strong><small>SEK</small></div>
           </div>
-          <div class="mssrp-bank-quick-actions">
-            <button class="mssrp-bank-action swish" id="mssrp-swish-open" type="button"><span>↗</span><strong>Swisha</strong><small>Telefonnummer</small></button>
-            <button class="mssrp-bank-action" type="button" data-phone-open="call"><span>☎</span><strong>Ring</strong><small>Öppna Telefon</small></button>
-            <button class="mssrp-bank-action" type="button" data-phone-open="sms"><span>▰</span><strong>SMS</strong><small>Skicka meddelande</small></button>
-          </div>
           <div class="mssrp-bank-grid">
             <div class="mssrp-bank-card mssrp-bank-pay-card"><div class="mssrp-bank-card-head"><span>DIN LÖN</span><span class="mssrp-bank-pill" id="bank-payroll-role">—</span></div><strong id="bank-paycheck">—</strong><small>daglig RP-lön</small><div class="mssrp-bank-meta"><span>Nästa lön</span><b id="bank-next-payday">—</b></div></div>
-            <div class="mssrp-bank-card"><div class="mssrp-bank-card-head"><span>KONTO</span><span class="mssrp-bank-account-no" id="bank-account-number">—</span></div><h3>Personkonto</h3><p>Kontot används för dina MSSRP-betalningar, Swish-mottagningar och löneinsättningar.</p><div class="mssrp-bank-meta"><span>Kontostatus</span><b>Aktivt</b></div></div>
+            <div class="mssrp-bank-card"><div class="mssrp-bank-card-head"><span>KONTO</span><span class="mssrp-bank-account-no" id="bank-account-number">—</span></div><h3>Personkonto</h3><p>Kontot används för dina MSSRP-betalningar och löneinsättningar.</p><div class="mssrp-bank-meta"><span>Kontostatus</span><b>Aktivt</b></div></div>
           </div>
           <div class="mssrp-bank-transactions"><div class="mssrp-bank-section-head"><div><span class="mssrp-bank-eyebrow">TRANSAKTIONER</span><h3>Senaste händelser</h3></div><button class="mssrp-secondary" id="bank-refresh" type="button">Uppdatera</button></div><div id="bank-transactions-list" class="mssrp-bank-transaction-list"><div class="mssrp-bank-loading">Laddar bankhändelser…</div></div></div>
-        </div>
-      </section>
-
-      <section class="mssrp-section mssrp-portal-page mssrp-phone-page" id="phone" data-portal-page="phone">
-        <div class="mssrp-section-title split">
-          <div><div class="mssrp-kicker">MSSRP MOBIL</div><h2>Din telefon</h2><p>SMS, samtal, Swish och Swedbank samlade i en RP-telefon.</p></div>
-          <div class="mssrp-phone-number-head"><span>Ditt nummer</span><strong id="mssrp-phone-number">Tilldelar…</strong></div>
-        </div>
-        <div class="mssrp-phone-stage">
-          <div class="mssrp-iphone" id="mssrp-phone-shell">
-            <div class="mssrp-iphone-notch"></div>
-            <div class="mssrp-iphone-screen">
-              <div class="mssrp-phone-topbar"><button id="mssrp-phone-home-button" type="button">Hem</button><div><strong id="mssrp-phone-app-title">Telefon</strong><small id="mssrp-phone-app-subtitle">MSSRP</small></div><span id="mssrp-phone-status">●</span></div>
-              <div id="mssrp-phone-incoming" class="mssrp-incoming-call hidden"></div>
-              <div id="mssrp-phone-app-body"></div>
-            </div>
-            <div class="mssrp-iphone-homebar"></div>
-          </div>
-          <div class="mssrp-phone-info-card">
-            <div class="mssrp-kicker">TELEFONFUNKTIONER</div>
-            <h3>Allt på samma telefon</h3>
-            <ul>
-              <li><strong>Telefon</strong><span>Ring en annan spelare genom deras RP-telefonnummer.</span></li>
-              <li><strong>Meddelanden</strong><span>Skicka och ta emot SMS som sparas i databasen.</span></li>
-              <li><strong>Swish</strong><span>Swisha direkt till mottagarens telefonnummer.</span></li>
-              <li><strong>Swedbank</strong><span>Se saldo, lön och banktransaktioner från telefonen.</span></li>
-            </ul>
-          </div>
         </div>
       </section>
 
