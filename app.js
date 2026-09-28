@@ -8218,38 +8218,39 @@ async function mssrpSocialRpc(name, args = {}) {
 }
 
 function ensureMssrpSocialUI() {
-  if (!currentUser || $('#mssrp-social-hub')) return;
+  if (!currentUser) return;
 
-  const roleplay = $('#roleplay');
-  if (!roleplay) return;
-
-  const section = document.createElement('section');
-  section.id = 'mssrp-social-hub';
-  section.className = 'mssrp-section mssrp-portal-page mssrp-social-section';
-  section.dataset.portalPage = 'social';
-  section.dataset.featureSection = 'social';
-  section.innerHTML = `
-    <div class="mssrp-section-title">
-      <div class="mssrp-kicker">SOCIAL & MARKNAD</div>
-      <h2>Sociala tjänster</h2>
-      <p>Facebook, Blocket och behörighetsstyrt Darkweb för MSSRP.</p>
-    </div>
-    <div class="mssrp-social-grid">
-      <button type="button" class="mssrp-social-card" data-social-platform="facebook">
-        <span class="social-icon facebook">f</span>
-        <span><strong>Facebook</strong><small>Inlägg och likes.</small></span>
-      </button>
-      <button type="button" class="mssrp-social-card" data-social-platform="blocket">
-        <span class="social-icon blocket">B</span>
-        <span><strong>Blocket</strong><small>Köp och sälj med MSSRP Bank.</small></span>
-      </button>
-      <button type="button" class="mssrp-social-card restricted" data-social-platform="darkweb">
-        <span class="social-icon darkweb">◉</span>
-        <span><strong>Darkweb</strong><small>Kräver Darkweb-behörighet.</small></span>
-      </button>
-    </div>`;
-
-  roleplay.insertAdjacentElement('afterend', section);
+  let section = $('#mssrp-social-hub');
+  if (!section) {
+    const roleplay = $('#roleplay');
+    if (!roleplay) return;
+    section = document.createElement('section');
+    section.id = 'mssrp-social-hub';
+    section.className = 'mssrp-section mssrp-portal-page mssrp-social-section';
+    section.dataset.portalPage = 'social';
+    section.dataset.featureSection = 'social';
+    section.innerHTML = `
+      <div class="mssrp-section-title">
+        <div class="mssrp-kicker">SOCIAL & MARKNAD</div>
+        <h2>Sociala tjänster</h2>
+        <p>Facebook, Blocket och behörighetsstyrt Darkweb för MSSRP.</p>
+      </div>
+      <div class="mssrp-social-grid">
+        <button type="button" class="mssrp-social-card" data-social-platform="facebook">
+          <span class="social-icon facebook">f</span>
+          <span><strong>Facebook</strong><small>Inlägg och likes.</small></span>
+        </button>
+        <button type="button" class="mssrp-social-card" data-social-platform="blocket">
+          <span class="social-icon blocket">B</span>
+          <span><strong>Blocket</strong><small>Köp och sälj med MSSRP Bank.</small></span>
+        </button>
+        <button type="button" class="mssrp-social-card restricted" data-social-platform="darkweb">
+          <span class="social-icon darkweb">◉</span>
+          <span><strong>Darkweb</strong><small>Kräver Darkweb-behörighet.</small></span>
+        </button>
+      </div>`;
+    roleplay.insertAdjacentElement('afterend', section);
+  }
 
   if (!document.querySelector('[data-mssrp-social-nav]')) {
     const nav = $('.mssrp-nav');
