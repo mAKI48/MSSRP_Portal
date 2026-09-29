@@ -53,6 +53,58 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, erlcConfigured: !!erlc });
 });
 
+app.get('/api/profiles', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user || res.headersSent) return;
+  try {
+    const userId = String(req.query?.user_id || '').trim();
+    const search = String(req.query?.search || '').trim();
+    let query = supabaseAdmin.from('profiles').select('*').order('display_name').limit(100);
+    if (userId) query = query.eq('id', userId).maybeSingle();
+    else if (search) query = query.ilike('display_name', `%${search.replace(/[%_]/g, '')}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+    if (userId) return res.json({ profile: data ? { id:data.id, display_name:data.display_name || data.full_name || 'Användare', avatar_url:data.avatar_url || null, bio:data.bio || '' } : null });
+    res.json({ profiles: (data || []).map(p => ({ id:p.id, display_name:p.display_name || p.full_name || 'Användare', avatar_url:p.avatar_url || null, bio:p.bio || '' })) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error?.message || 'Kunde inte läsa profiler.' });
+  }
+});
+
+app.put('/api/profile', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user || res.headersSent) return;
+  const displayName = String(req.body?.display_name || '').trim().slice(0, 60);
+  const bio = String(req.body?.bio || '').trim().slice(0, 300);
+  const avatarUrl = req.body?.avatar_url ? String(req.body.avatar_url).trim().slice(0, 2000) : null;
+  if (!displayName) return res.status(400).json({ error: 'Namn saknas.' });
+  try {
+    let result = await supabaseAdmin.from('profiles').upsert({
+      id: user.id,
+      display_name: displayName,
+      bio,
+      avatar_url: avatarUrl,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' }).select('*').single();
+    if (result.error) {
+      // Older profiles schemas may not have bio/updated_at yet.
+      result = await supabaseAdmin.from('profiles').upsert({
+        id: user.id,
+        display_name: displayName,
+        avatar_url: avatarUrl
+      }, { onConflict: 'id' }).select('*').single();
+    }
+    if (result.error) throw result.error;
+    const data=result.data;
+    res.json({ profile: { id:data.id, display_name:data.display_name || displayName, avatar_url:data.avatar_url || avatarUrl, bio:data.bio || bio } });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error?.message || 'Kunde inte uppdatera profilen.' });
+  }
+});
+
+
 app.post('/api/erlc/hint', async (req, res) => {
   const user = await requireUser(req, res, 'admin');
   if (!user || res.headersSent) return;
