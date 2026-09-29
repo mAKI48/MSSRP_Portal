@@ -1,11 +1,6 @@
 (() => {
 'use strict';
 
-/* ============================================================
-   MSSRP
-   PRO UI APPLICATION
-   ============================================================ */
-
 const SUPABASE_URL =
   'https://jixhrtgsxlvfrqlxkpwi.supabase.co';
 
@@ -20,15 +15,6 @@ const supabase =
     SUPABASE_ANON_KEY
   );
 
-/* ============================================================
-   SWISH / PAYROLL HELPERS
-   ============================================================ */
-/**
- * Skickar pengar via Swish (mellan användare eller konton)
- * @param {string} senderPhone - Avsändarens nummer
- * @param {string} receiverPhone - Mottagarens nummer
- * @param {number} amount - Belopp att överföra
- */
 async function sendSwish(receiverAccountId, amount) {
   try {
     const numAmount = Number(amount);
@@ -125,15 +111,7 @@ async function sendSwish(receiverAccountId, amount) {
     return false;
   }
 }
-// ==========================================
-// 3. LÖNEHANTERING (PAYROLL)
-// ==========================================
 
-/**
- * Hämtar lönen för ett visst jobb och en viss grad/roll
- * @param {string} jobName - Namn på jobbet (t.ex. 'police', 'cardealer')
- * @param {number} grade - Rollens grad/nivå (t.ex. 0, 1, 2)
- */
 async function getSalary(jobName, grade) {
   try {
     const { data, error } = await supabase
@@ -155,12 +133,6 @@ async function getSalary(jobName, grade) {
   }
 }
 
-/**
- * Ändrar eller skapar lön för en specifik roll (payroll)
- * @param {string} jobName - Namn på jobbet
- * @param {number} grade - Rollens grad/nivå
- * @param {number} newSalary - Det nya lönebeloppet
- */
 async function setSalary(jobName, grade, newSalary) {
   try {
     const salaryVal = Number(newSalary);
