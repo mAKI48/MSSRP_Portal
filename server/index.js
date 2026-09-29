@@ -269,7 +269,7 @@ app.get('/api/admin/payroll', async (req, res) => {
       supabaseAdmin.from('profiles').select('id,display_name,user_payroll_roles(payroll_role_id,payroll_roles(id,name,monthly_salary))').order('display_name')
     ]);
     if (roleError) throw roleError; if (userError) throw userError;
-    const mapped=(users||[]).map(u=>{const pr=u.user_payroll_roles?.[0]?.payroll_roles;return {id:u.id,display_name:u.display_name,payroll_role_id:pr?.id||null,monthly_salary:Number(pr?.monthly_salary||0)};});
+    const mapped=(users||[]).map(u=>{const pr=u.user_payroll_roles?.[0]?.payroll_roles;return {id:u.id,display_name:u.display_name,payroll_role_id:pr?.id||null,payroll_role_name:pr?.name||null,monthly_salary:Number(pr?.monthly_salary||0)};});
     res.json({roles:roles||[],users:mapped});
   } catch(error){console.error(error);res.status(500).json({error:error?.message||'Kunde inte läsa payroll.'});}
 });
