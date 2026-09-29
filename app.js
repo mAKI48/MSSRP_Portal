@@ -8829,7 +8829,7 @@ function updateAuthModal() {
 const MSSRP_BANK_TABLES = {
   accounts: ['bank_accounts', 'mssrp_bank_accounts'],
   transactions: ['bank_transactions', 'mssrp_bank_transactions'],
-  payroll: []
+  payroll: ['user_payroll_roles', 'payroll_roles', 'user_payroll', 'bank_payroll', 'payroll_assignments', 'mssrp_payroll']
 };
 
 let mssrpBankTableCache = {};
@@ -9277,9 +9277,32 @@ function payrollEscape(value) {
 }
 
 async function adminFindPayrollTable() {
-  // Payroll is stored in user_payroll_roles + payroll_roles.
-  // Kept only for compatibility with older code paths.
-  return { ok: true, table: 'payroll_roles', rows: [], userRows: [] };
+  // MSSRP payroll uses the normalized Supabase schema:
+  // payroll_roles + user_payroll_roles.
+  const [{ data: roles, error: roleError }, { data: assignments, error: assignmentError }] = await Promise.all([
+    supabase.from('payroll_roles').select('id,name,description,monthly_salary,sort_order').order('sort_order'),
+    supabase.from('user_payroll_roles').select('user_id,payroll_role_id,last_paid_on,payroll_roles(id,name,monthly_salary)')
+  ]);
+
+  if (roleError) {
+    return { ok:false, table:null, rows:[], userRows:[], error:roleError };
+  }
+  if (assignmentError) {
+    return { ok:false, table:null, rows:[], userRows:[], error:assignmentError };
+  }
+
+  const rows = (assignments || []).map(row => ({
+    id: row.user_id,
+    user_id: row.user_id,
+    payroll_role_id: row.payroll_role_id,
+    role_name: row.payroll_roles?.name || 'Civil',
+    payroll_role: row.payroll_roles?.name || 'Civil',
+    daily_salary: Number(row.payroll_roles?.monthly_salary || 0),
+    salary: Number(row.payroll_roles?.monthly_salary || 0),
+    last_paid_on: row.last_paid_on || null
+  }));
+
+  return { ok:true, table:'user_payroll_roles', rows, userRows:rows, roles:roles || [] };
 }
 
 async function adminFindAccountsTable() {
@@ -9380,75 +9403,57 @@ async function adminSetUserCash(userId, amount, description='Admin bankinsättni
   return true;
 }
 
-async function adminUpsertPayroll(userId, roleName, salary) {
-  if (!hasPermission('admin')) throw new Error('Adminbehörighet krävs.');
-
-  const salaryValue = Number(salary);
+async function adminEnsurePayrollRole(roleName, salary) {
   const name = String(roleName || '').trim();
-  if (!name || !Number.isFinite(salaryValue) || salaryValue < 0) {
+  const monthlySalary = Math.round(Number(salary));
+  if (!name || !Number.isFinite(monthlySalary) || monthlySalary < 0) {
     throw new Error('Ogiltig lön.');
   }
 
-  // The actual payroll schema in this project is:
-  // payroll_roles(id, name, monthly_salary, ...)
-  // user_payroll_roles(user_id, payroll_role_id, ...)
-  let { data: role, error } = await supabase
+  const existing = await supabase
     .from('payroll_roles')
-    .select('id,name,monthly_salary')
+    .select('id,name,description,monthly_salary,sort_order')
     .eq('name', name)
     .maybeSingle();
-
-  if (error) throw error;
-
-  if (!role) {
-    const created = await supabase
-      .from('payroll_roles')
-      .insert({
-        name,
-        monthly_salary: salaryValue,
-        description: `MSSRP ${name}`,
-        sort_order: Number(name.replace(/\D/g, '')) || 0
-      })
-      .select('id,name,monthly_salary')
-      .single();
-
-    if (created.error) throw created.error;
-    role = created.data;
-  } else if (Number(role.monthly_salary) !== salaryValue) {
-    const updated = await supabase
-      .from('payroll_roles')
-      .update({ monthly_salary: salaryValue })
-      .eq('id', role.id)
-      .select('id,name,monthly_salary')
-      .single();
-
-    if (updated.error) throw updated.error;
-    role = updated.data;
-  }
-
-  const existing = await supabase
-    .from('user_payroll_roles')
-    .select('user_id,payroll_role_id')
-    .eq('user_id', userId)
-    .maybeSingle();
-
   if (existing.error) throw existing.error;
 
   if (existing.data) {
-    const updated = await supabase
-      .from('user_payroll_roles')
-      .update({ payroll_role_id: role.id })
-      .eq('user_id', userId);
-
-    if (updated.error) throw updated.error;
-  } else {
-    const inserted = await supabase
-      .from('user_payroll_roles')
-      .insert({ user_id: userId, payroll_role_id: role.id });
-
-    if (inserted.error) throw inserted.error;
+    if (Number(existing.data.monthly_salary) !== monthlySalary) {
+      const updated = await supabase
+        .from('payroll_roles')
+        .update({ monthly_salary: monthlySalary, updated_at: new Date().toISOString() })
+        .eq('id', existing.data.id)
+        .select('id,name,description,monthly_salary,sort_order')
+        .single();
+      if (updated.error) throw updated.error;
+      return updated.data;
+    }
+    return existing.data;
   }
 
+  const created = await supabase
+    .from('payroll_roles')
+    .insert({
+      name,
+      description: `MSSRP ${name}`,
+      monthly_salary: monthlySalary,
+      sort_order: Number(name.replace(/\D/g, '')) || 0
+    })
+    .select('id,name,description,monthly_salary,sort_order')
+    .single();
+  if (created.error) throw created.error;
+  return created.data;
+}
+
+async function adminUpsertPayroll(userId, roleName, salary) {
+  if (!hasPermission('admin')) throw new Error('Adminbehörighet krävs.');
+  if (!userId) throw new Error('Ingen användare vald.');
+
+  const role = await adminEnsurePayrollRole(roleName, salary);
+  const result = await supabase
+    .from('user_payroll_roles')
+    .upsert({ user_id:userId, payroll_role_id:role.id, updated_at:new Date().toISOString() }, { onConflict:'user_id' });
+  if (result.error) throw result.error;
   return role;
 }
 
@@ -9464,128 +9469,64 @@ async function loadAdminPayroll() {
 
   try {
     const search = ($('#admin-payroll-search')?.value || '').trim().toLowerCase();
-
-    const { data: profiles, error: profileError } = await supabase
-      .from('profiles')
-      .select('id,display_name')
-      .order('display_name');
-
+    const [{data:profiles,error:profileError}, payrollResult] = await Promise.all([
+      supabase.from('profiles').select('id,display_name').order('display_name'),
+      adminFindPayrollTable()
+    ]);
     if (profileError) throw profileError;
-
-    const { data: assignments, error: payrollError } = await supabase
-      .from('user_payroll_roles')
-      .select('user_id,payroll_role_id,payroll_roles(id,name,monthly_salary)');
-
-    if (payrollError) throw payrollError;
-
-    const assignmentMap = new Map(
-      (assignments || []).map(row => [row.user_id, row])
-    );
-
-    const filtered = (profiles || []).filter(p =>
-      `${p.display_name || ''} ${p.id}`.toLowerCase().includes(search)
-    );
-
+    const payrollRows = payrollResult.ok ? (payrollResult.rows || []) : [];
+    const filtered = (profiles || []).filter(p => `${p.display_name||''} ${p.id}`.toLowerCase().includes(search));
     userBody.innerHTML = filtered.map(user => {
-      const assignment = assignmentMap.get(user.id);
-      const payrollRole = Array.isArray(assignment?.payroll_roles)
-        ? assignment.payroll_roles[0]
-        : assignment?.payroll_roles;
-      const role = payrollRole?.name || 'Ingen löneklass';
-      const salary = Number(payrollRole?.monthly_salary || 0);
-
-      return `<tr>
-        <td><strong>${payrollEscape(user.display_name || 'Okänd')}</strong><small>${payrollEscape(user.id)}</small></td>
-        <td>${payrollEscape(role)}</td>
-        <td>${escapeHtml(formatBankSEK(salary))}</td>
-        <td><div class="mssrp-admin-assign">
-          <button type="button" class="mssrp-secondary" data-payroll-user="${user.id}">Välj</button>
-          <button type="button" class="mssrp-primary" data-admin-cash-user="${user.id}">Sätt in cash</button>
-          <button type="button" class="mssrp-secondary" data-pay-cash-user="${user.id}" data-pay-cash-amount="${salary}">Betala lön</button>
-        </div></td>
-      </tr>`;
+      const row = payrollRows.find(r => bankMatchesUser(r,user.id));
+      const role = bankFirstValue(row,['role_name','payroll_role','salary_class','pay_class','loneklass','role'],'Civil');
+      const salary = bankFirstValue(row,['daily_salary','daily_pay','salary','paycheck','amount','lön','lon'],0);
+      return `<tr><td><strong>${payrollEscape(user.display_name||'Okänd')}</strong><small>${payrollEscape(user.id)}</small></td><td>${payrollEscape(role)}</td><td>${escapeHtml(formatBankSEK(salary))}</td><td><div class="mssrp-admin-assign"><button type="button" class="mssrp-secondary" data-payroll-user="${user.id}">Välj</button><button type="button" class="mssrp-primary" data-admin-cash-user="${user.id}">Sätt in cash</button><button type="button" class="mssrp-secondary" data-pay-cash-user="${user.id}" data-pay-cash-amount="${Number(salary)||0}">Betala lön</button></div></td></tr>`;
     }).join('') || '<tr><td colspan="4">Inga användare hittades.</td></tr>';
 
-    $$('#admin-payroll-roles [data-payroll-role]').forEach(button =>
-      button.addEventListener('click', async () => {
-        const selectedUser = window.__mssrpSelectedPayrollUser;
-        if (!selectedUser) {
-          toast('Välj en användare först.');
-          return;
-        }
+    $$('#admin-payroll-roles [data-payroll-role]').forEach(button => button.addEventListener('click', async () => {
+      const selectedUser = window.__mssrpSelectedPayrollUser;
+      if (!selectedUser) { toast('Välj en användare först.'); return; }
+      try {
+        await adminUpsertPayroll(selectedUser, button.dataset.payrollRole, button.dataset.payrollSalary);
+        toast(`${button.dataset.payrollRole} tilldelad.`);
+        await loadAdminPayroll();
+        await loadMssrpBank();
+      } catch(error) { console.error(error); toast(error.message || 'Kunde inte tilldela löneklass.'); }
+    }));
 
-        try {
-          await adminUpsertPayroll(
-            selectedUser,
-            button.dataset.payrollRole,
-            button.dataset.payrollSalary
-          );
-          toast(`${button.dataset.payrollRole} tilldelad.`);
-          await loadAdminPayroll();
-          await loadMssrpBank();
-        } catch (error) {
-          console.error('Payroll assignment failed:', error);
-          toast(error.message || 'Kunde inte tilldela löneklass.');
-        }
-      })
-    );
+    $$('#admin-payroll-users [data-payroll-user]').forEach(button => button.addEventListener('click', () => {
+      window.__mssrpSelectedPayrollUser = button.dataset.payrollUser;
+      $$('#admin-payroll-users tr').forEach(tr => tr.classList.remove('is-selected'));
+      button.closest('tr')?.classList.add('is-selected');
+      toast('Användare vald. Välj en löneklass ovan.');
+    }));
 
-    $$('#admin-payroll-users [data-payroll-user]').forEach(button =>
-      button.addEventListener('click', () => {
-        window.__mssrpSelectedPayrollUser = button.dataset.payrollUser;
-        $$('#admin-payroll-users tr').forEach(tr => tr.classList.remove('is-selected'));
-        button.closest('tr')?.classList.add('is-selected');
-        toast('Användare vald. Välj en löneklass ovan.');
-      })
-    );
+    $$('#admin-payroll-users [data-admin-cash-user]').forEach(button => button.addEventListener('click', async () => {
+      const userId = button.dataset.adminCashUser;
+      const raw = window.prompt('Hur mycket SEK ska sättas in på användarens bankkonto?');
+      if (raw === null) return;
+      const amount = Number(String(raw).replace(',', '.'));
+      if (!Number.isFinite(amount) || amount === 0) { toast('Ange ett giltigt belopp.'); return; }
+      try {
+        await adminSetUserCash(userId, amount, 'Admin bankinsättning');
+        toast(`${formatBankSEK(amount)} insatt på kontot.`);
+        await loadAdminPayroll();
+      } catch(error) { console.error(error); toast(error.message || 'Kunde inte sätta in pengar.'); }
+    }));
 
-    $$('#admin-payroll-users [data-admin-cash-user]').forEach(button =>
-      button.addEventListener('click', async () => {
-        const userId = button.dataset.adminCashUser;
-        const raw = window.prompt('Hur mycket SEK ska sättas in på användarens bankkonto?');
-        if (raw === null) return;
-
-        const amount = Number(String(raw).replace(',', '.'));
-        if (!Number.isFinite(amount) || amount === 0) {
-          toast('Ange ett giltigt belopp.');
-          return;
-        }
-
-        try {
-          await adminSetUserCash(userId, amount, 'Admin bankinsättning');
-          toast(`${formatBankSEK(amount)} insatt på kontot.`);
-          await loadAdminPayroll();
-        } catch (error) {
-          console.error(error);
-          toast(error.message || 'Kunde inte sätta in pengar.');
-        }
-      })
-    );
-
-    $$('#admin-payroll-users [data-pay-cash-user]').forEach(button =>
-      button.addEventListener('click', async () => {
-        const userId = button.dataset.payCashUser;
-        const amount = Number(button.dataset.payCashAmount || 0);
-
-        if (!amount) {
-          toast('Användaren har ingen lön tilldelad.');
-          return;
-        }
-
-        try {
-          await adminSetUserCash(userId, amount, 'Daglig RP-lön');
-          toast(`Lön på ${formatBankSEK(amount)} utbetald.`);
-          await loadAdminPayroll();
-        } catch (error) {
-          console.error(error);
-          toast(error.message || 'Kunde inte betala lön.');
-        }
-      })
-    );
-  } catch (error) {
-    console.error('Admin payroll failed:', error);
-    userBody.innerHTML =
-      `<tr><td colspan="4">Kunde inte ladda löner: ${payrollEscape(error.message || 'Okänt fel')}</td></tr>`;
+    $$('#admin-payroll-users [data-pay-cash-user]').forEach(button => button.addEventListener('click', async () => {
+      const userId = button.dataset.payCashUser;
+      const amount = Number(button.dataset.payCashAmount || 0);
+      if (!amount) { toast('Användaren har ingen daglig lön tilldelad.'); return; }
+      try {
+        await adminSetUserCash(userId, amount, 'Daglig RP-lön');
+        toast(`Lön på ${formatBankSEK(amount)} utbetald.`);
+        await loadAdminPayroll();
+      } catch(error) { console.error(error); toast(error.message || 'Kunde inte betala lön.'); }
+    }));
+  } catch(error) {
+    console.error('Admin payroll failed:',error);
+    userBody.innerHTML = `<tr><td colspan="4">Kunde inte ladda löner: ${payrollEscape(error.message || 'Okänt fel')}</td></tr>`;
   }
 }
 
