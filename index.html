@@ -115,11 +115,10 @@
           <a href="#shop">Shop</a>
           <a href="#social" data-mssrp-social-nav>Social</a>
       <a href="#bank" data-bank-nav>Bank</a>
-          <a href="#services">Funktioner</a>
           <a href="#roleplay" data-feature="roleplay_system">Rollspelssystem</a>
           <a href="#tactical" data-feature="tactical_plan">Taktisk plan</a>
-          <a href="#roblox" data-feature="roblox_integration">Roblox</a>
           <a href="#admin" data-feature="admin">Admin</a>
+          <a href="#darkweb" data-darkweb-nav class="hidden">Darkweb</a>
           <a href="#about">Om oss</a>
         </nav>
 
@@ -160,31 +159,13 @@
           <h2>Information om MSSRP</h2>
         </div>
         <div class="mssrp-info-card">
-          <p>MSSRP är en central portal för Malmö Skåne Sweden Roleplay. Funktioner och åtkomst visas utifrån användarens roller och behörigheter.</p>
-          <p>Administratörer kan tilldela roller och styra vilka delar av systemet olika användare får använda.</p>
+          <p><strong>MSSRP</strong> är en svensk ER:LC-rollspelsserver för dig som vill spela svensk roleplay tillsammans med andra.</p>
+          <p>Vi bygger en samlad portal för community, sociala funktioner, rollspel, bank och serververktyg. Åtkomst till skyddade delar styrs av användarens roller och behörigheter.</p>
+          <p><strong>Vill du gå med i communityt?</strong></p>
+          <p><a class="mssrp-primary" href="https://discord.gg/qwHEjm44MW" target="_blank" rel="noopener noreferrer">Gå med i vår Discord</a></p>
         </div>
       </section>
 
-      <section class="mssrp-section dark mssrp-portal-page" id="services" data-portal-page="services">
-        <div class="mssrp-section-title">
-          <div class="mssrp-kicker">PORTAL</div>
-          <h2>Systemets funktioner</h2>
-        </div>
-        <div class="mssrp-card-grid">
-<button class="mssrp-card" data-feature="roleplay_system">
-            <span class="mssrp-card-icon">▤</span>
-            <span><strong>Rollspelssystem</strong><small>Krimvapen, Fastigheter och Folkbokföring.</small></span>
-          </button>
-          <button class="mssrp-card restricted" data-feature="tactical_plan">
-            <span class="mssrp-card-icon">⌖</span>
-            <span><strong>Taktisk plan</strong><small>Endast FRI, NI och administratörer.</small></span>
-          </button>
-          <button class="mssrp-card" data-feature="roblox_integration">
-            <span class="mssrp-card-icon">◈</span>
-            <span><strong>Roblox-integration</strong><small>Kommunikation mellan MSSRP och Roblox-servern via backend.</small></span>
-          </button>
-        </div>
-      </section>
 
       
 
@@ -207,6 +188,7 @@
             <button class="mssrp-social-tab active" data-social-view="facebook">Facebook</button>
             <button class="mssrp-social-tab" data-social-view="messages">Messenger</button>
             <button class="mssrp-social-tab" data-social-view="blocket">Blocket</button>
+            <button class="mssrp-social-tab hidden" data-social-view="darkweb" id="social-darkweb-tab">Darkweb</button>
             <button class="mssrp-social-tab" data-social-view="profile">Profil</button>
           </div>
 
@@ -250,8 +232,12 @@
             <div id="blocket-feed" class="mssrp-blocket-grid"><div class="mssrp-social-loading">Laddar annonser…</div></div>
           </div>
 
+          <div class="mssrp-social-view hidden" id="social-darkweb-view">
+            <div class="mssrp-social-panel"><span class="mssrp-social-kicker">DARKWEB</span><h2>Darkweb</h2><p>Endast användare med Darkweb-rollen kan se detta område.</p></div>
+          </div>
+
           <div class="mssrp-social-view hidden" id="social-profile-view">
-            <div class="mssrp-profile-page"><div class="mssrp-profile-cover"></div><div class="mssrp-profile-main"><div class="mssrp-avatar profile" id="social-profile-avatar">M</div><div><h2 id="social-profile-name">Din profil</h2><p id="social-profile-handle">@mssrp</p></div><div class="mssrp-profile-actions"><button data-social-edit-profile>Redigera profil</button></div></div><div class="mssrp-profile-bio" id="social-profile-bio">Ingen presentation ännu.</div><div class="mssrp-profile-tabs"><button class="active">Inlägg</button><span id="social-profile-post-count">0 inlägg</span></div><div id="social-profile-feed" class="mssrp-fb-feed"></div></div>
+            <div class="mssrp-profile-page"><div class="mssrp-profile-cover"></div><div class="mssrp-profile-main"><div class="mssrp-avatar profile" id="social-profile-avatar">M</div><img id="social-profile-avatar-image" class="mssrp-profile-avatar-image hidden" alt="Profilbild"><div><h2 id="social-profile-name">Din profil</h2><p id="social-profile-handle">@mssrp</p></div><div class="mssrp-profile-actions"><button data-social-edit-profile>Redigera profil</button></div></div><div class="mssrp-profile-bio" id="social-profile-bio">Ingen presentation ännu.</div><div class="mssrp-profile-tabs"><button class="active">Inlägg</button><span id="social-profile-post-count">0 inlägg</span></div><div id="social-profile-feed" class="mssrp-fb-feed"></div></div>
           </div>
         </div>
       </section>
@@ -299,10 +285,6 @@
         <div class="mssrp-info-card"><strong>Taktisk planering</strong><p>Öppna sparade operationer eller skapa en ny plan.</p><div class="mssrp-actions"><button id="btn-new-op-portal" class="mssrp-primary">+ Ny operation</button><button id="btn-open-op-portal" class="mssrp-secondary">Sparade operationer</button></div></div>
       </section>
 
-      <section class="mssrp-section dark mssrp-portal-section mssrp-portal-page" id="roblox" data-portal-page="roblox" data-feature-section="roblox_integration">
-        <div class="mssrp-section-title"><div class="mssrp-kicker">INTEGRATION</div><h2>Roblox-integration</h2><p>Koppla MSSRP:s webbportal till Roblox via en säker backend.</p></div>
-        <div class="mssrp-info-card"><strong>MSSRP Roblox Bridge</strong><p>Serverhändelser och annan integrationsdata kan skickas via backend. Hemliga nycklar ska aldrig ligga i Roblox-klienten.</p><div class="mssrp-status-row"><span class="status-dot"></span><span id="roblox-status">Integration konfigureras i backend</span></div></div>
-      </section>
 
       <section class="mssrp-section dark mssrp-portal-section mssrp-portal-page" id="admin" data-portal-page="admin" data-feature-section="admin">
         <div class="mssrp-section-title"><div class="mssrp-kicker">ADMIN</div><h2>Adminpanel</h2><p>Hantera användare, roller, behörigheter och serverintegration.</p></div>
