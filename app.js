@@ -1848,7 +1848,7 @@ function ensurePasswordResetUI() {
       try {
         // Supabase requires this redirect URL to be present in
         // Authentication -> URL Configuration -> Redirect URLs.
-        const redirectTo = `${window.location.origin}${window.location.pathname}?reset=password`;
+        const redirectTo = `${window.location.origin}/#reset-password`;
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo
         });
@@ -1894,7 +1894,7 @@ function ensurePasswordResetUI() {
         if (error) throw error;
 
         if (newMessage) newMessage.textContent = 'Lösenordet har uppdaterats.';
-        window.history.replaceState({}, document.title, window.location.pathname);
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
         setTimeout(() => newModal?.classList.add('hidden'), 1200);
       } catch (error) {
         console.error('Password update:', error);
@@ -1915,8 +1915,8 @@ function ensurePasswordResetUI() {
 
 async function checkPasswordRecovery() {
   try {
-    const params = new URLSearchParams(window.location.search);
-    const reset = params.get('reset') === 'password';
+    const hash = window.location.hash || '';
+    const reset = hash === '#reset-password' || hash.startsWith('#reset-password?');
     if (!reset) return;
 
     ensurePasswordResetUI();
@@ -2054,7 +2054,11 @@ async function submitGateAuth(mode = 'login') {
   try {
     const result = mode === 'login'
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password });
+      : await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: window.location.origin }
+        });
     if (result.error) throw result.error;
     currentUser = result.data?.user || null;
     updateAuthUI();
@@ -2120,7 +2124,8 @@ async function submitAuth() {
       result =
         await supabase.auth.signUp({
           email,
-          password
+          password,
+          options: { emailRedirectTo: window.location.origin }
         });
 
     }
