@@ -1848,7 +1848,7 @@ function ensurePasswordResetUI() {
       try {
         // Supabase requires this redirect URL to be present in
         // Authentication -> URL Configuration -> Redirect URLs.
-        const redirectTo = `${window.location.origin}/#reset-password`;
+        const redirectTo = `${window.location.origin}${window.location.pathname}?reset=password`;
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo
         });
@@ -1894,7 +1894,7 @@ function ensurePasswordResetUI() {
         if (error) throw error;
 
         if (newMessage) newMessage.textContent = 'Lösenordet har uppdaterats.';
-        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+        window.history.replaceState({}, document.title, window.location.pathname);
         setTimeout(() => newModal?.classList.add('hidden'), 1200);
       } catch (error) {
         console.error('Password update:', error);
@@ -1915,8 +1915,8 @@ function ensurePasswordResetUI() {
 
 async function checkPasswordRecovery() {
   try {
-    const hash = window.location.hash || '';
-    const reset = hash === '#reset-password' || hash.startsWith('#reset-password?');
+    const params = new URLSearchParams(window.location.search);
+    const reset = params.get('reset') === 'password';
     if (!reset) return;
 
     ensurePasswordResetUI();
@@ -2054,11 +2054,7 @@ async function submitGateAuth(mode = 'login') {
   try {
     const result = mode === 'login'
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin }
-        });
+      : await supabase.auth.signUp({ email, password });
     if (result.error) throw result.error;
     currentUser = result.data?.user || null;
     updateAuthUI();
@@ -2124,8 +2120,7 @@ async function submitAuth() {
       result =
         await supabase.auth.signUp({
           email,
-          password,
-          options: { emailRedirectTo: window.location.origin }
+          password
         });
 
     }
@@ -2207,7 +2202,7 @@ async function logout() {
    ============================================================ */
 
 function formatRoleName(role) {
-  const names = { civil:'Civil', polis:'Polis', fri:'FRI', ni:'NI', dispatcher:'Dispatcher', admin:'Admin' };
+  const names = { civil:'Civil', polis:'Polis', fri:'FRI', ni:'NI', dispatcher:'Dispatcher', admin:'Admin', darkweb:'Darkweb' };
   return names[role] || role;
 }
 
@@ -2283,6 +2278,12 @@ function updatePortalAccess() {
 
   const tacticalNav = $('[data-feature="tactical_plan"]');
   if (tacticalNav && hasPermission('tactical_plan')) tacticalNav.classList.remove('hidden');
+
+  const darkwebAllowed = accessRoles.some(role => String(role).toLowerCase() === 'darkweb');
+  const darkwebNav = $('[data-darkweb-nav]');
+  const darkwebTab = $('#social-darkweb-tab');
+  if (darkwebNav) darkwebNav.classList.toggle('hidden', !darkwebAllowed);
+  if (darkwebTab) darkwebTab.classList.toggle('hidden', !darkwebAllowed);
 
   const adminPanel = $('#admin-panel');
   if (adminPanel) adminPanel.classList.toggle('hidden', !hasPermission('admin'));
@@ -8834,7 +8835,7 @@ function updateAuthModal() {
 const MSSRP_BANK_TABLES = {
   accounts: ['bank_accounts', 'mssrp_bank_accounts'],
   transactions: ['bank_transactions', 'mssrp_bank_transactions'],
-  payroll: ['user_payroll', 'bank_payroll', 'payroll_assignments', 'mssrp_payroll']
+  payroll: ['user_payroll_roles', 'mssrp_user_payroll', 'user_payroll', 'mssrp_payroll', 'payroll']
 };
 
 let mssrpBankTableCache = {};
@@ -9057,6 +9058,25 @@ async function loadMssrpBank() {
     currentUser.email?.split('@')[0] ||
     'MSSRP-användare'
   );
+
+  // Prefer the secure server-side bank/payroll endpoint. This avoids
+  // depending on the old generic payroll table names and fixes the
+  // "Ingen payroll-tabell hittades" problem.
+  try {
+    const bank = await mssrpApi('/bank/account');
+    const account = bank.account || null;
+    const payroll = bank.payroll || null;
+    setBankText('#bank-balance', formatBankSEK(account?.balance || 0));
+    setBankText('#bank-account-number', formatBankAccountNumber(account?.account_number, currentUser.id));
+    setBankText('#bank-payroll-role', payroll?.role_name || 'Civil');
+    setBankText('#bank-role-line', `Löneklass: ${payroll?.role_name || 'Civil'}`);
+    setBankText('#bank-paycheck', formatBankSEK(payroll?.monthly_salary || 0));
+    setBankText('#bank-next-payday', formatBankDate(payroll?.next_payday));
+    renderBankTransactions(bank.transactions || [], account);
+    return;
+  } catch (apiError) {
+    console.warn('Server-side bank API unavailable, using Supabase fallback:', apiError?.message || apiError);
+  }
 
   const list = $('#bank-transactions-list');
   if (list) list.innerHTML = '<div class="mssrp-bank-loading">Laddar bankhändelser…</div>';
@@ -9421,36 +9441,49 @@ async function loadAdminPayroll() {
   const userBody = $('#admin-payroll-users');
   if (!roleBox || !userBody || !hasPermission('admin')) return;
 
-  roleBox.innerHTML = mssrpPayrollRoleCatalog().map(role => `
-    <button type="button" class="mssrp-card" data-payroll-role="${payrollEscape(role.name)}" data-payroll-salary="${role.salary}">
-      <strong>${payrollEscape(role.name)}</strong><small>${formatBankSEK(role.salary)} / dag</small>
-    </button>`).join('');
+  roleBox.innerHTML = '<div class="mssrp-social-loading">Laddar löneklasser…</div>';
+  userBody.innerHTML = '<tr><td colspan="4">Laddar användare…</td></tr>';
 
   try {
-    const search = ($('#admin-payroll-search')?.value || '').trim().toLowerCase();
-    const [{data:profiles,error:profileError}, payrollResult] = await Promise.all([
-      supabase.from('profiles').select('id,display_name').order('display_name'),
-      adminFindPayrollTable()
-    ]);
-    if (profileError) throw profileError;
-    const payrollRows = payrollResult.ok ? (payrollResult.rows || []) : [];
-    const filtered = (profiles || []).filter(p => `${p.display_name||''} ${p.id}`.toLowerCase().includes(search));
-    userBody.innerHTML = filtered.map(user => {
-      const row = payrollRows.find(r => bankMatchesUser(r,user.id));
-      const role = bankFirstValue(row,['role_name','payroll_role','salary_class','pay_class','loneklass','role'],'Civil');
-      const salary = bankFirstValue(row,['daily_salary','daily_pay','salary','paycheck','amount','lön','lon'],0);
-      return `<tr><td><strong>${payrollEscape(user.display_name||'Okänd')}</strong><small>${payrollEscape(user.id)}</small></td><td>${payrollEscape(role)}</td><td>${escapeHtml(formatBankSEK(salary))}</td><td><div class="mssrp-admin-assign"><button type="button" class="mssrp-secondary" data-payroll-user="${user.id}">Välj</button><button type="button" class="mssrp-primary" data-admin-cash-user="${user.id}">Sätt in cash</button><button type="button" class="mssrp-secondary" data-pay-cash-user="${user.id}" data-pay-cash-amount="${Number(salary)||0}">Betala lön</button></div></td></tr>`;
-    }).join('') || '<tr><td colspan="4">Inga användare hittades.</td></tr>';
+    const payload = await mssrpApi('/admin/payroll');
+    const roles = Array.isArray(payload.roles) ? payload.roles : [];
+    const users = Array.isArray(payload.users) ? payload.users : [];
+    const search = ($('#admin-payroll-search')?.value || '').trim().toLocaleLowerCase('sv');
 
-    $$('#admin-payroll-roles [data-payroll-role]').forEach(button => button.addEventListener('click', async () => {
+    roleBox.innerHTML = roles.map(role => `
+      <button type="button" class="mssrp-card" data-payroll-role-id="${payrollEscape(role.id)}" data-payroll-role-name="${payrollEscape(role.name)}">
+        <strong>${payrollEscape(role.name)}</strong>
+        <small>${formatBankSEK(role.monthly_salary || 0)} / dag</small>
+      </button>`).join('') || '<div class="mssrp-social-loading">Inga löneklasser hittades.</div>';
+
+    const filtered = users.filter(user => `${user.display_name || ''} ${user.id}`.toLocaleLowerCase('sv').includes(search));
+    userBody.innerHTML = filtered.map(user => `
+      <tr>
+        <td><strong>${payrollEscape(user.display_name || 'Okänd')}</strong><small>${payrollEscape(user.id)}</small></td>
+        <td>${payrollEscape(user.payroll_role_name || 'Civil')}</td>
+        <td>${escapeHtml(formatBankSEK(user.monthly_salary || 0))}</td>
+        <td><div class="mssrp-admin-assign">
+          <button type="button" class="mssrp-secondary" data-payroll-user="${payrollEscape(user.id)}">Välj</button>
+          <button type="button" class="mssrp-primary" data-admin-cash-user="${payrollEscape(user.id)}">Sätt in cash</button>
+          <button type="button" class="mssrp-secondary" data-pay-cash-user="${payrollEscape(user.id)}">Betala lön</button>
+        </div></td>
+      </tr>`).join('') || '<tr><td colspan="4">Inga användare hittades.</td></tr>';
+
+    $$('#admin-payroll-roles [data-payroll-role-id]').forEach(button => button.addEventListener('click', async () => {
       const selectedUser = window.__mssrpSelectedPayrollUser;
       if (!selectedUser) { toast('Välj en användare först.'); return; }
       try {
-        await adminUpsertPayroll(selectedUser, button.dataset.payrollRole, button.dataset.payrollSalary);
-        toast(`${button.dataset.payrollRole} tilldelad.`);
+        await mssrpApi('/admin/payroll/assign', {
+          method: 'POST',
+          body: JSON.stringify({ user_id: selectedUser, payroll_role_id: button.dataset.payrollRoleId })
+        });
+        toast(`${button.dataset.payrollRoleName} tilldelad.`);
         await loadAdminPayroll();
         await loadMssrpBank();
-      } catch(error) { console.error(error); toast(error.message || 'Kunde inte tilldela löneklass.'); }
+      } catch (error) {
+        console.error(error);
+        toast(error.message || 'Kunde inte tilldela löneklass.');
+      }
     }));
 
     $$('#admin-payroll-users [data-payroll-user]').forEach(button => button.addEventListener('click', () => {
@@ -9475,16 +9508,18 @@ async function loadAdminPayroll() {
 
     $$('#admin-payroll-users [data-pay-cash-user]').forEach(button => button.addEventListener('click', async () => {
       const userId = button.dataset.payCashUser;
-      const amount = Number(button.dataset.payCashAmount || 0);
-      if (!amount) { toast('Användaren har ingen daglig lön tilldelad.'); return; }
       try {
-        await adminSetUserCash(userId, amount, 'Daglig RP-lön');
-        toast(`Lön på ${formatBankSEK(amount)} utbetald.`);
+        const result = await mssrpApi('/admin/payroll/pay', {
+          method: 'POST',
+          body: JSON.stringify({ user_id: userId })
+        });
+        toast(`Lön på ${formatBankSEK(result.amount || 0)} utbetald.`);
         await loadAdminPayroll();
       } catch(error) { console.error(error); toast(error.message || 'Kunde inte betala lön.'); }
     }));
   } catch(error) {
-    console.error('Admin payroll failed:',error);
+    console.error('Admin payroll failed:', error);
+    roleBox.innerHTML = '<div class="mssrp-social-loading">Kunde inte ladda löneklasser.</div>';
     userBody.innerHTML = `<tr><td colspan="4">Kunde inte ladda löner: ${payrollEscape(error.message || 'Okänt fel')}</td></tr>`;
   }
 }
@@ -9580,7 +9615,25 @@ function initMssrpSocialOneToOne() {
   }
 
   async function profileFor(id) {
-    try { const {data}=await supabase.from('profiles').select('id,display_name,avatar_url').eq('id',id).maybeSingle(); return data || {id,display_name:'MSSRP-användare'}; } catch { return {id,display_name:'MSSRP-användare'}; }
+    try {
+      const result = await mssrpApi(`/profiles?user_id=${encodeURIComponent(id)}`);
+      return result.profile || {id,display_name:'MSSRP-användare'};
+    } catch {
+      try { const {data}=await supabase.from('profiles').select('id,display_name,avatar_url,bio').eq('id',id).maybeSingle(); return data || {id,display_name:'MSSRP-användare'}; }
+      catch { return {id,display_name:'MSSRP-användare'}; }
+    }
+  }
+
+  async function listProfiles(search='') {
+    try {
+      const result = await mssrpApi(`/profiles?search=${encodeURIComponent(search)}`);
+      return Array.isArray(result.profiles) ? result.profiles : [];
+    } catch {
+      const columns = 'id,display_name,avatar_url,bio';
+      const {data,error}=await supabase.from('profiles').select(columns).neq('id',uid()).order('display_name',{ascending:true}).limit(100);
+      if (error) throw error;
+      return data || [];
+    }
   }
 
   function setSocialView(view) {
@@ -9592,6 +9645,7 @@ function initMssrpSocialOneToOne() {
     if(view==='messages') loadSocialConversations();
     if(view==='blocket') loadBlocket1to1();
     if(view==='profile') loadSocialProfile();
+    if(view==='darkweb') loadDarkweb();
   }
 
   async function loadSocialHeader() {
@@ -9600,6 +9654,17 @@ function initMssrpSocialOneToOne() {
     ['social-my-handle','social-profile-handle'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='@'+n.toLowerCase().replace(/[^a-z0-9åäö]+/gi,'').slice(0,20);});
     ['social-my-avatar','social-composer-avatar','social-profile-avatar'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=avatarLetter(n);});
     if(uid()) {
+      try {
+        const me = await profileFor(uid());
+        const bio = document.getElementById('social-profile-bio');
+        if (bio) bio.textContent = me.bio || 'Ingen presentation ännu.';
+        const image = document.getElementById('social-profile-avatar-image');
+        if (image) { image.src = me.avatar_url || ''; image.classList.toggle('hidden', !me.avatar_url); }
+        ['social-my-avatar','social-composer-avatar','social-profile-avatar'].forEach(id=>{
+          const e=document.getElementById(id);
+          if(e && me.avatar_url) e.style.backgroundImage=`url("${esc(me.avatar_url)}")`;
+        });
+      } catch {}
       try { const [{count:followers},{count:following}] = await Promise.all([
         supabase.from('mssrp_social_follows').select('id',{count:'exact',head:true}).eq('following_id',uid()),
         supabase.from('mssrp_social_follows').select('id',{count:'exact',head:true}).eq('follower_id',uid())
@@ -9660,7 +9725,7 @@ function initMssrpSocialOneToOne() {
   }
 
   async function loadSuggestions() {
-    const box=$s('#social-suggestions');if(!box||!uid())return;const {data}=await supabase.from('profiles').select('id,display_name,avatar_url').neq('id',uid()).limit(12);const people=data||[];box.innerHTML=people.map(p=>`<div class="mssrp-suggestion" data-person-id="${p.id}"><div class="mssrp-avatar">${esc(avatarLetter(p.display_name))}</div><div class="mssrp-suggestion-main"><strong>${esc(p.display_name||'Användare')}</strong><small>MSSRP</small></div><button class="mssrp-follow-btn" data-follow-user="${p.id}">Följ</button></div>`).join('')||'<small>Inga förslag just nu.</small>';
+    const box=$s('#social-suggestions');if(!box||!uid())return;const people=await listProfiles('');box.innerHTML=people.map(p=>`<div class="mssrp-suggestion" data-person-id="${p.id}"><div class="mssrp-avatar">${esc(avatarLetter(p.display_name))}</div><div class="mssrp-suggestion-main"><strong>${esc(p.display_name||'Användare')}</strong><small>MSSRP</small></div><button class="mssrp-follow-btn" data-follow-user="${p.id}">Följ</button></div>`).join('')||'<small>Inga förslag just nu.</small>';
     for(const p of people){const {data:f}=await supabase.from('mssrp_social_follows').select('id').eq('follower_id',uid()).eq('following_id',p.id).maybeSingle();const b=box.querySelector(`[data-follow-user="${p.id}"]`);if(b&&f){b.textContent='Följer';b.classList.add('following')}}
   }
 
@@ -9674,9 +9739,9 @@ function initMssrpSocialOneToOne() {
 
   async function openNewMessagePicker() {
     if (!await requireSocialUser()) return;
-    const {data,error}=await supabase.from('profiles').select('id,display_name,avatar_url').neq('id',uid()).order('display_name',{ascending:true}).limit(100);
-    if(error){toastSafe(error.message||'Kunde inte hämta användare.');return;}
-    const people=data||[];
+    let people=[];
+    try { people=await listProfiles(''); }
+    catch(error){toastSafe(error.message||'Kunde inte hämta användare.');return;}
     const modal=document.createElement('div');
     modal.className='mssrp-social-compose-modal';
     modal.innerHTML=`<div class="mssrp-social-modal-backdrop"></div><div class="mssrp-social-compose-card mssrp-new-chat-card"><button type="button" class="mssrp-social-modal-close" aria-label="Stäng">×</button><h2>Nytt meddelande</h2><p>Välj vem du vill skriva till.</p><input type="search" class="mssrp-new-chat-search" placeholder="Sök användare…" aria-label="Sök användare"><div class="mssrp-new-chat-results"></div></div>`;
@@ -9701,12 +9766,40 @@ function initMssrpSocialOneToOne() {
   async function loadBlocket1to1(){const box=$s('#blocket-feed');if(!box)return;const {data,error}=await supabase.from('mssrp_social_blocket').select('*').eq('sold',false).order('created_at',{ascending:false});if(error){box.innerHTML='<div class="mssrp-social-loading">Kunde inte läsa Blocket. Kör social-migrationen.</div>';return;}box.innerHTML=(data||[]).map(x=>`<article class="mssrp-blocket-card"><img class="mssrp-blocket-card-image" src="${esc(x.image_url||'')}" onerror="this.style.display='none'"><div class="mssrp-blocket-card-body"><div class="mssrp-blocket-price">${Number(x.price||0).toLocaleString('sv-SE')} kr</div><h3>${esc(x.title)}</h3><div class="mssrp-blocket-meta">${esc(x.category||'Övrigt')} · ${esc(x.location||'Malmö')}</div><p>${esc(x.description||'')}</p><div class="mssrp-blocket-actions"><button data-blocket-contact="${x.seller_id}">💬 Kontakta</button><button data-blocket-favorite="${x.id}">♡ Spara</button></div></div></article>`).join('')||'<div class="mssrp-social-loading">Inga annonser ännu.</div>';}
   async function createBlocket(){if(!await requireSocialUser())return;const modal=document.createElement('div');modal.className='mssrp-social-compose-modal';modal.innerHTML=`<div class="mssrp-social-modal-backdrop"></div><div class="mssrp-social-compose-card"><button class="mssrp-social-modal-close">×</button><h2>Lägg upp på Blocket</h2><form id="blocket-form" class="mssrp-social-compose-form"><input name="title" placeholder="Vad säljer du?" required><div class="mssrp-form-grid-2"><input name="price" type="number" min="0" placeholder="Pris (kr)" required><select name="category"><option>Övrigt</option><option>Fordon</option><option>Elektronik</option><option>Kläder</option><option>Bostad</option></select></div><input name="location" placeholder="Plats" value="Malmö"><textarea name="description" placeholder="Beskriv varan…"></textarea><label class="mssrp-upload-box">🖼️ Lägg till bild<input name="image" type="file" accept="image/*" hidden></label><img class="mssrp-upload-preview hidden" id="blocket-preview"><button class="mssrp-social-primary">Publicera annons</button></form></div>`;document.body.appendChild(modal);modal.querySelector('.mssrp-social-modal-close').onclick=()=>modal.remove();modal.querySelector('.mssrp-social-modal-backdrop').onclick=()=>modal.remove();const f=modal.querySelector('input[type=file]');f.onchange=()=>{const i=modal.querySelector('#blocket-preview');if(f.files[0]){i.src=URL.createObjectURL(f.files[0]);i.classList.remove('hidden')}};modal.querySelector('form').onsubmit=async e=>{e.preventDefault();let image_url=null;if(f.files[0])image_url=await uploadSocialImage(f.files[0]);const v=e.target;const {error}=await supabase.from('mssrp_social_blocket').insert({seller_id:uid(),seller_name:name(),title:v.title.value,price:Number(v.price.value),category:v.category.value,location:v.location.value,description:v.description.value,image_url});if(error)toastSafe(error.message);else{modal.remove();toastSafe('Annonsen publicerades.');loadBlocket1to1();}};}
 
+  async function loadDarkweb() {
+    const view=$s('#social-darkweb-view'); if(!view) return;
+    const allowed=accessRoles.some(r=>String(r).toLowerCase()==='darkweb');
+    if(!allowed){ view.innerHTML='<div class="mssrp-social-loading">Du saknar Darkweb-rollen.</div>'; return; }
+    view.innerHTML='<div class="mssrp-social-panel"><span class="mssrp-social-kicker">DARKWEB</span><h2>Darkweb</h2><p>Det här området är endast synligt för användare med Darkweb-rollen.</p><p>Innehåll och åtkomst styrs av MSSRP:s behörigheter.</p></div>';
+  }
+
+  async function editSocialProfile() {
+    if(!await requireSocialUser()) return;
+    const me=await profileFor(uid());
+    const modal=document.createElement('div'); modal.className='mssrp-social-compose-modal';
+    modal.innerHTML=`<div class="mssrp-social-modal-backdrop"></div><div class="mssrp-social-compose-card"><button type="button" class="mssrp-social-modal-close">×</button><h2>Redigera profil</h2><form id="mssrp-profile-edit-form" class="mssrp-social-compose-form"><label>Namn<input name="display_name" maxlength=60 required value="${esc(me.display_name||name())}"></label><label>Presentation<textarea name="bio" maxlength=300 placeholder="Berätta om dig själv…">${esc(me.bio||'')}</textarea></label><label class="mssrp-upload-box">🖼️ Byt profilbild<input name="avatar" type="file" accept="image/*" hidden></label><img id="mssrp-profile-preview" class="mssrp-upload-preview ${me.avatar_url?'':'hidden'}" src="${esc(me.avatar_url||'')}"><button class="mssrp-social-primary">Spara profil</button></form></div>`;
+    document.body.appendChild(modal);
+    const close=()=>modal.remove(); modal.querySelector('.mssrp-social-modal-close').onclick=close; modal.querySelector('.mssrp-social-modal-backdrop').onclick=close;
+    const file=modal.querySelector('input[name=avatar]'), preview=modal.querySelector('#mssrp-profile-preview');
+    file.onchange=()=>{if(file.files[0]){preview.src=URL.createObjectURL(file.files[0]);preview.classList.remove('hidden')}};
+    modal.querySelector('form').onsubmit=async e=>{
+      e.preventDefault(); const btn=e.submitter; btn.disabled=true;
+      try {
+        let avatar_url=me.avatar_url||null; if(file.files[0]) avatar_url=await uploadSocialImage(file.files[0]);
+        const result=await mssrpApi('/profile',{method:'PUT',body:JSON.stringify({display_name:e.target.display_name.value.trim(),bio:e.target.bio.value.trim(),avatar_url})});
+        if(result.profile?.display_name) currentUser.user_metadata={...(currentUser.user_metadata||{}),display_name:result.profile.display_name};
+        close(); await loadSocialHeader(); await loadSocialProfile(); toastSafe('Profilen uppdaterades.');
+      } catch(error){toastSafe(error.message||'Kunde inte uppdatera profilen.');} finally {btn.disabled=false;}
+    };
+  }
+
   async function loadSocialProfile(){await loadSocialHeader();const box=$s('#social-profile-feed');if(!box||!uid())return;const {data}=await supabase.from('mssrp_social_posts').select('*').eq('author_id',uid()).order('created_at',{ascending:false});$s('#social-profile-post-count').textContent=`${data?.length||0} inlägg`;box.innerHTML='';for(const p of data||[])box.insertAdjacentHTML('beforeend',await renderSocialPost(p));}
 
   document.addEventListener('click',async e=>{
     const tab=e.target.closest('[data-social-view]');if(tab){setSocialView(tab.dataset.socialView);return;}
     if(e.target.closest('[data-social-compose]')){createPost();return;}
     if(e.target.closest('[data-social-new-message]')){openNewMessagePicker();return;}
+    if(e.target.closest('[data-social-edit-profile]')){editSocialProfile();return;}
     const react=e.target.closest('[data-social-react]');if(react){const post=react.closest('[data-post-id]');if(post)toggleReaction(post.dataset.postId,react.dataset.socialReact);return;}
     const comment=e.target.closest('[data-social-comment]');if(comment){const post=comment.closest('[data-post-id]');post?.querySelector('input[name=comment]')?.focus();return;}
     const follow=e.target.closest('[data-follow-user]');if(follow){toggleFollow(follow.dataset.followUser);return;}
@@ -9763,7 +9856,39 @@ function initMssrpPhone() {
   async function acceptCall(){if(!incoming)return;const call=incoming;incoming=null;try{await setupPeer(call.from);await pc.setRemoteDescription(new RTCSessionDescription(call.sdp));const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await signal(call.from,'phone-answer',{sdp:answer});showStatus('Samtalet ansluter…');}catch(e){cleanup();alert('Kunde inte svara: '+e.message);}}
   function cleanup(){if(pc){pc.close();pc=null;}if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;}$p('#mssrp-phone-audio').srcObject=null;activePeer=null;muted=false;$p('#mssrp-phone-mute').textContent='🎙️ Mikrofon på';$p('#mssrp-phone-callbox').classList.add('mssrp-phone-hidden');}
   async function listen(){if(!myId())return;if(phoneChannel)supabase.removeChannel(phoneChannel);phoneChannel=supabase.channel(`mssrp-phone-${myId()}`);phoneChannel.on('broadcast',{event:'phone-offer'},({payload})=>{if(!payload||payload.to!==myId())return;incoming=payload;showStatus(`Inkommande samtal från ${payload.fromName||'användare'}`);const yes=confirm(`Inkommande samtal från ${payload.fromName||'användare'}. Svara?`);if(yes)acceptCall();else{signal(payload.from,'phone-reject');cleanup();}}).on('broadcast',{event:'phone-answer'},async({payload})=>{if(payload?.to===myId()&&pc&&payload.sdp){await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));showStatus('Samtalet ansluter…');}}).on('broadcast',{event:'phone-ice'},async({payload})=>{if(payload?.to===myId()&&pc&&payload.candidate){try{await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));}catch(e){console.warn(e);}}}).on('broadcast',{event:'phone-hangup'},({payload})=>{if(payload?.to===myId()){cleanup();showStatus('Samtalet avslutades.');}}).on('broadcast',{event:'phone-reject'},({payload})=>{if(payload?.to===myId()){cleanup();showStatus('Samtalet avböjdes.');}}).subscribe();}
-  async function loadContacts(){const box=$p('#mssrp-phone-contacts');if(!myId()){box.textContent='Logga in för att se användare.';return;}$p('#mssrp-phone-own').textContent=stableNumber(myId());box.textContent='Laddar kontakter…';const {data,error}=await supabase.from('profiles').select('id,display_name,full_name').neq('id',myId()).limit(100);if(error){box.textContent='Kunde inte hämta kontakter från profiles-tabellen.';return;}box.innerHTML='';(data||[]).forEach(u=>{const name=u.display_name||u.full_name||'Användare';const row=document.createElement('div');row.className='mssrp-phone-contact';const main=document.createElement('div');main.className='mssrp-phone-contact-main';const strong=document.createElement('strong');strong.textContent=name;const small=document.createElement('small');small.textContent=stableNumber(u.id);main.append(strong,small);const btn=document.createElement('button');btn.textContent='📞 Ring';btn.onclick=()=>startCall(u.id);row.append(main,btn);box.append(row);});if(!data?.length)box.textContent='Inga andra användare hittades.';}
+  async function loadContacts(){
+    const box=$p('#mssrp-phone-contacts');
+    if(!box||!myId()){if(box)box.textContent='Logga in för att se användare.';return;}
+    $p('#mssrp-phone-own').textContent=stableNumber(myId());
+    box.textContent='Laddar kontakter…';
+    try {
+      let data=[];
+      try {
+        const result=await mssrpApi('/profiles');
+        data=(result.profiles||[]).filter(u=>u.id!==myId());
+      } catch {
+        const fallback=await supabase.from('profiles').select('id,display_name,avatar_url').neq('id',myId()).limit(100);
+        if(fallback.error) throw fallback.error;
+        data=fallback.data||[];
+      }
+      box.innerHTML='';
+      data.forEach(u=>{
+        const contactName=u.display_name||'Användare';
+        const row=document.createElement('div'); row.className='mssrp-phone-contact';
+        const main=document.createElement('div'); main.className='mssrp-phone-contact-main';
+        const strong=document.createElement('strong'); strong.textContent=contactName;
+        const small=document.createElement('small'); small.textContent=stableNumber(u.id);
+        main.append(strong,small);
+        const btn=document.createElement('button'); btn.textContent='📞 Ring'; btn.onclick=()=>startCall(u.id);
+        row.append(main,btn); box.append(row);
+      });
+      if(!data.length)box.textContent='Inga andra användare hittades.';
+    } catch(error) {
+      console.error('Kontakter kunde inte laddas:',error);
+      box.textContent='Kunde inte hämta kontakter. Kontrollera att serverns /api/profiles är igång.';
+    }
+  }
+
   $p('#mssrp-phone-toggle').onclick=()=>{$p('#mssrp-phone-panel').classList.toggle('open');if($p('#mssrp-phone-panel').classList.contains('open')){loadContacts();listen();}};
   $p('#mssrp-phone-close').onclick=()=>$p('#mssrp-phone-panel').classList.remove('open');
   root.addEventListener('click',e=>{const b=e.target.closest('[data-phone-key]');if(!b)return;const k=b.dataset.phoneKey;if(k==='⌫')digits.value=digits.value.slice(0,-1);else digits.value+=k;});
