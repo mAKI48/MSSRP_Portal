@@ -9301,23 +9301,6 @@ function payrollEscape(value) {
   return escapeHtml(String(value ?? ''));
 }
 
-async function adminFindPayrollTable() {
-  const cached = mssrpBankTableCache.payroll;
-  if (cached) {
-    const test = await bankReadCandidate(cached, null);
-    if (test.ok) return test;
-    delete mssrpBankTableCache.payroll;
-  }
-  for (const table of MSSRP_BANK_TABLES.payroll) {
-    const result = await bankReadCandidate(table, null);
-    if (result.ok) {
-      mssrpBankTableCache.payroll = table;
-      return result;
-    }
-  }
-  return { ok:false, table:null, rows:[], userRows:[], error:new Error('Ingen payroll-tabell hittades.') };
-}
-
 async function adminFindAccountsTable() {
   const cached = mssrpBankTableCache.accounts;
   if (cached) {
@@ -9416,24 +9399,18 @@ async function adminSetUserCash(userId, amount, description='Admin bankinsättni
   return true;
 }
 
-async function adminUpsertPayroll(userId, roleName, salary) {
+async function adminUpsertPayroll(userId, roleId) {
   if (!hasPermission('admin')) throw new Error('Adminbehörighet krävs.');
-  const tableResult = await adminFindPayrollTable();
-  if (!tableResult.ok || !tableResult.table) throw tableResult.error || new Error('Ingen payroll-tabell hittades.');
-  const table = tableResult.table;
-  const existing = (tableResult.rows || []).find(row => bankMatchesUser(row,userId));
-  const salaryValue = Number(salary);
-  if (!Number.isFinite(salaryValue) || salaryValue < 0) throw new Error('Ogiltig lön.');
+  if (!userId) throw new Error('Ingen användare vald.');
+  if (!roleId) throw new Error('Ingen löneklass vald.');
 
-  if (existing?.id) {
-    const roleKey = ['role_name','payroll_role','salary_class','pay_class','loneklass','role'].find(k => Object.prototype.hasOwnProperty.call(existing,k)) || 'role_name';
-    const salaryKey = ['daily_salary','daily_pay','salary','paycheck','amount','lön','lon'].find(k => Object.prototype.hasOwnProperty.call(existing,k)) || 'daily_salary';
-    const { error } = await supabase.from(table).update({ [roleKey]:roleName, [salaryKey]:salaryValue }).eq('id',existing.id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase.from(table).insert({ user_id:userId, role_name:roleName, daily_salary:salaryValue });
-    if (error) throw error;
-  }
+  // Payroll uses the real backend API and the project's
+  // payroll_roles + user_payroll_roles tables. Do not try to
+  // discover a legacy "payroll" table from the browser.
+  return await mssrpApi('/admin/payroll/assign', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, payroll_role_id: roleId })
+  });
 }
 
 async function loadAdminPayroll() {
@@ -9441,47 +9418,48 @@ async function loadAdminPayroll() {
   const userBody = $('#admin-payroll-users');
   if (!roleBox || !userBody || !hasPermission('admin')) return;
 
-  roleBox.innerHTML = '<div class="mssrp-social-loading">Laddar löneklasser…</div>';
-  userBody.innerHTML = '<tr><td colspan="4">Laddar användare…</td></tr>';
-
   try {
-    const payload = await mssrpApi('/admin/payroll');
-    const roles = Array.isArray(payload.roles) ? payload.roles : [];
-    const users = Array.isArray(payload.users) ? payload.users : [];
-    const search = ($('#admin-payroll-search')?.value || '').trim().toLocaleLowerCase('sv');
+    const payroll = await mssrpApi('/admin/payroll');
+    const roles = Array.isArray(payroll.roles) ? payroll.roles : [];
+    const users = Array.isArray(payroll.users) ? payroll.users : [];
 
     roleBox.innerHTML = roles.map(role => `
       <button type="button" class="mssrp-card" data-payroll-role-id="${payrollEscape(role.id)}" data-payroll-role-name="${payrollEscape(role.name)}">
-        <strong>${payrollEscape(role.name)}</strong>
-        <small>${formatBankSEK(role.monthly_salary || 0)} / dag</small>
-      </button>`).join('') || '<div class="mssrp-social-loading">Inga löneklasser hittades.</div>';
+        <strong>${payrollEscape(role.name)}</strong><small>${formatBankSEK(role.monthly_salary || 0)} / dag</small>
+      </button>`).join('') || '<div class="mssrp-muted">Inga löneklasser hittades.</div>';
 
-    const filtered = users.filter(user => `${user.display_name || ''} ${user.id}`.toLocaleLowerCase('sv').includes(search));
-    userBody.innerHTML = filtered.map(user => `
-      <tr>
+    const search = ($('#admin-payroll-search')?.value || '').trim().toLowerCase();
+    const filtered = users.filter(user =>
+      `${user.display_name || ''} ${user.id || ''}`.toLowerCase().includes(search)
+    );
+
+    userBody.innerHTML = filtered.map(user => {
+      const roleName = user.payroll_role_name || 'Ingen löneklass';
+      const salary = Number(user.monthly_salary || 0);
+      return `<tr>
         <td><strong>${payrollEscape(user.display_name || 'Okänd')}</strong><small>${payrollEscape(user.id)}</small></td>
-        <td>${payrollEscape(user.payroll_role_name || 'Civil')}</td>
-        <td>${escapeHtml(formatBankSEK(user.monthly_salary || 0))}</td>
+        <td>${payrollEscape(roleName)}</td>
+        <td>${escapeHtml(formatBankSEK(salary))}</td>
         <td><div class="mssrp-admin-assign">
           <button type="button" class="mssrp-secondary" data-payroll-user="${payrollEscape(user.id)}">Välj</button>
           <button type="button" class="mssrp-primary" data-admin-cash-user="${payrollEscape(user.id)}">Sätt in cash</button>
-          <button type="button" class="mssrp-secondary" data-pay-cash-user="${payrollEscape(user.id)}">Betala lön</button>
+          <button type="button" class="mssrp-secondary" data-pay-cash-user="${payrollEscape(user.id)}" data-pay-cash-amount="${salary}">Betala lön</button>
         </div></td>
-      </tr>`).join('') || '<tr><td colspan="4">Inga användare hittades.</td></tr>';
+      </tr>`;
+    }).join('') || '<tr><td colspan="4">Inga användare hittades.</td></tr>';
 
     $$('#admin-payroll-roles [data-payroll-role-id]').forEach(button => button.addEventListener('click', async () => {
       const selectedUser = window.__mssrpSelectedPayrollUser;
       if (!selectedUser) { toast('Välj en användare först.'); return; }
+      const roleId = button.dataset.payrollRoleId;
+      const roleName = button.dataset.payrollRoleName || 'Löneklass';
       try {
-        await mssrpApi('/admin/payroll/assign', {
-          method: 'POST',
-          body: JSON.stringify({ user_id: selectedUser, payroll_role_id: button.dataset.payrollRoleId })
-        });
-        toast(`${button.dataset.payrollRoleName} tilldelad.`);
+        await adminUpsertPayroll(selectedUser, roleId);
+        toast(`${roleName} tilldelad.`);
         await loadAdminPayroll();
         await loadMssrpBank();
       } catch (error) {
-        console.error(error);
+        console.error('Payroll assignment failed:', error);
         toast(error.message || 'Kunde inte tilldela löneklass.');
       }
     }));
@@ -9508,19 +9486,22 @@ async function loadAdminPayroll() {
 
     $$('#admin-payroll-users [data-pay-cash-user]').forEach(button => button.addEventListener('click', async () => {
       const userId = button.dataset.payCashUser;
+      const amount = Number(button.dataset.payCashAmount || 0);
+      if (!amount) { toast('Användaren har ingen lön tilldelad.'); return; }
       try {
         const result = await mssrpApi('/admin/payroll/pay', {
           method: 'POST',
           body: JSON.stringify({ user_id: userId })
         });
-        toast(`Lön på ${formatBankSEK(result.amount || 0)} utbetald.`);
+        toast(`Lön på ${formatBankSEK(result.amount || amount)} utbetald.`);
         await loadAdminPayroll();
+        await loadMssrpBank();
       } catch(error) { console.error(error); toast(error.message || 'Kunde inte betala lön.'); }
     }));
   } catch(error) {
     console.error('Admin payroll failed:', error);
-    roleBox.innerHTML = '<div class="mssrp-social-loading">Kunde inte ladda löneklasser.</div>';
     userBody.innerHTML = `<tr><td colspan="4">Kunde inte ladda löner: ${payrollEscape(error.message || 'Okänt fel')}</td></tr>`;
+    roleBox.innerHTML = '<div class="mssrp-muted">Kunde inte ladda löneklasser.</div>';
   }
 }
 
