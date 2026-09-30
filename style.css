@@ -3411,3 +3411,215 @@ body.mssrp-tab-mode { overflow-x: hidden; }
 /* Social profile avatar */
 .mssrp-profile-avatar-image{width:96px;height:96px;border-radius:50%;object-fit:cover;display:block;border:4px solid #fff;box-shadow:0 4px 18px rgba(0,0,0,.2);}
 .mssrp-avatar[style*="background-image"]{background-size:cover;background-position:center;color:transparent;}
+/* ============================================================
+   MSSRP // TOTAL VISUAL REVAMP v2
+   Dark cinematic + glass + premium RP dashboard
+   Functional markup/JS remains untouched.
+   ============================================================ */
+:root{
+  --m-bg:#05070d;
+  --m-bg2:#080c14;
+  --m-panel:rgba(13,18,30,.78);
+  --m-panel2:rgba(18,25,40,.88);
+  --m-line:rgba(148,163,184,.14);
+  --m-line2:rgba(96,165,250,.25);
+  --m-text:#f7f9fc;
+  --m-muted:#8e9aab;
+  --m-blue:#4da3ff;
+  --m-cyan:#57e6ff;
+  --m-purple:#9b7cff;
+  --m-green:#36e39a;
+  --m-red:#ff5570;
+  --m-shadow:0 24px 80px rgba(0,0,0,.38);
+  --m-radius:18px;
+}
+
+html{scroll-behavior:smooth;background:var(--m-bg)}
+body{
+  background:
+    radial-gradient(circle at 12% 0%,rgba(48,117,255,.16),transparent 30%),
+    radial-gradient(circle at 90% 8%,rgba(155,124,255,.13),transparent 26%),
+    linear-gradient(180deg,#05070d 0%,#080b12 55%,#05070d 100%) !important;
+  color:var(--m-text) !important;
+  font-family:Inter,system-ui,sans-serif !important;
+}
+body:before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;opacity:.35;
+  background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);
+  background-size:44px 44px;
+  mask-image:linear-gradient(to bottom,#000,transparent 90%);
+}
+
+/* Header / navigation */
+.mssrp-header{
+  position:sticky !important;top:0;z-index:1000;
+  background:rgba(5,7,13,.72) !important;
+  border-bottom:1px solid var(--m-line) !important;
+  backdrop-filter:blur(22px) saturate(150%) !important;
+  -webkit-backdrop-filter:blur(22px) saturate(150%);
+  box-shadow:0 10px 40px rgba(0,0,0,.18);
+}
+.mssrp-header-inner{max-width:1500px !important;min-height:76px !important;padding:0 28px !important;gap:24px}
+.mssrp-brand{gap:12px !important;text-decoration:none !important;color:#fff !important}
+.mssrp-brand-mark{
+  width:42px !important;height:42px !important;border-radius:13px !important;
+  display:grid !important;place-items:center !important;
+  background:linear-gradient(135deg,#4da3ff,#755cff) !important;
+  box-shadow:0 0 30px rgba(77,163,255,.35),inset 0 1px rgba(255,255,255,.3) !important;
+  border:1px solid rgba(255,255,255,.18);
+}
+.mssrp-brand strong{font-size:17px !important;letter-spacing:.12em !important}
+.mssrp-brand span{color:#7f8ba0 !important;font-size:10px !important;letter-spacing:.08em}
+.mssrp-nav{gap:4px !important;overflow:auto;scrollbar-width:none}
+.mssrp-nav::-webkit-scrollbar{display:none}
+.mssrp-nav a{
+  color:#8e9aab !important;padding:10px 12px !important;border-radius:11px !important;
+  transition:.2s ease !important;font-size:12px !important;font-weight:750 !important;white-space:nowrap;
+}
+.mssrp-nav a:hover,.mssrp-nav a.portal-tab-active{
+  color:#fff !important;background:rgba(77,163,255,.11) !important;
+  box-shadow:inset 0 0 0 1px rgba(77,163,255,.13);
+}
+.mssrp-account{margin-left:auto}
+.mssrp-police-btn,.mssrp-primary,.btn-primary{
+  border:0 !important;color:#fff !important;font-weight:850 !important;
+  background:linear-gradient(135deg,#3f9cff,#725cff) !important;
+  box-shadow:0 10px 28px rgba(66,130,255,.22),inset 0 1px rgba(255,255,255,.25) !important;
+  border-radius:12px !important;transition:.2s ease !important;
+}
+.mssrp-police-btn:hover,.mssrp-primary:hover,.btn-primary:hover{transform:translateY(-2px);filter:brightness(1.08)}
+.mssrp-secondary,.btn-secondary{
+  color:#e8edf5 !important;background:rgba(255,255,255,.045) !important;
+  border:1px solid rgba(148,163,184,.18) !important;border-radius:12px !important;
+}
+
+/* Page / hero */
+.mssrp-home{max-width:none !important}
+.mssrp-hero{
+  min-height:650px !important;display:grid;align-items:center !important;
+  position:relative;overflow:hidden;border-bottom:1px solid var(--m-line) !important;
+  background:
+    radial-gradient(circle at 72% 42%,rgba(87,230,255,.12),transparent 18%),
+    radial-gradient(circle at 80% 52%,rgba(117,92,255,.17),transparent 30%),
+    linear-gradient(135deg,rgba(7,12,23,.94),rgba(5,7,13,.72)) !important;
+}
+.mssrp-hero:before{content:"";position:absolute;width:520px;height:520px;right:-130px;top:60px;border:1px solid rgba(77,163,255,.13);border-radius:50%;box-shadow:0 0 100px rgba(77,163,255,.08),inset 0 0 100px rgba(117,92,255,.05)}
+.mssrp-hero:after{content:"";position:absolute;width:280px;height:280px;right:70px;top:180px;border:1px solid rgba(87,230,255,.12);border-radius:50%}
+.mssrp-hero-inner{position:relative;z-index:2;max-width:1500px !important;width:100%;margin:auto !important;padding:100px 40px !important;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(300px,.7fr);gap:60px;align-items:center}
+.mssrp-kicker{color:#5aa7ff !important;letter-spacing:.2em !important;font-size:10px !important;font-weight:900 !important}
+.mssrp-hero h1{font-size:clamp(48px,7vw,92px) !important;line-height:.94 !important;letter-spacing:-.065em !important;margin:16px 0 24px !important;max-width:850px;background:linear-gradient(120deg,#fff 20%,#a9d5ff 60%,#8c7bff);-webkit-background-clip:text;background-clip:text;color:transparent !important}
+.mssrp-hero p{max-width:650px;color:#9ca8b9 !important;font-size:18px !important;line-height:1.7 !important}
+.mssrp-hero-actions{display:flex;gap:12px;margin-top:32px}
+.mssrp-hero-status{
+  justify-self:end;width:min(390px,100%);padding:24px;border:1px solid rgba(87,230,255,.18);border-radius:20px;
+  background:linear-gradient(145deg,rgba(17,28,45,.75),rgba(10,14,24,.72));box-shadow:var(--m-shadow);backdrop-filter:blur(18px);
+}
+.mssrp-hero-status strong{display:block;margin:8px 0;color:#fff;letter-spacing:.08em;font-size:12px}
+.mssrp-hero-status small{color:#78869a;line-height:1.6}
+.status-dot{box-shadow:0 0 14px rgba(54,227,154,.75) !important}
+
+/* Sections / cards */
+.mssrp-section{max-width:1500px !important;margin:0 auto !important;padding:86px 40px !important;background:transparent !important;color:var(--m-text) !important}
+.mssrp-section-title h2,.mssrp-section h2{color:#fff !important;letter-spacing:-.035em !important;font-size:clamp(30px,4vw,48px) !important}
+.mssrp-section-title p,.mssrp-info-card p{color:#8794a7 !important;line-height:1.7}
+.mssrp-info-card,.mssrp-mini-card,.mssrp-card{
+  background:linear-gradient(145deg,rgba(17,24,39,.78),rgba(8,12,21,.78)) !important;
+  border:1px solid var(--m-line) !important;border-radius:var(--m-radius) !important;
+  box-shadow:0 18px 60px rgba(0,0,0,.22) !important;backdrop-filter:blur(18px);
+}
+.mssrp-info-card{padding:28px !important}
+.mssrp-card{transition:.25s ease !important}
+.mssrp-card:hover{transform:translateY(-4px);border-color:var(--m-line2) !important;box-shadow:0 25px 65px rgba(0,0,0,.3) !important}
+
+/* Forms */
+input,textarea,select{
+  color:#f5f7fb !important;background:rgba(6,10,18,.75) !important;
+  border:1px solid rgba(148,163,184,.16) !important;border-radius:12px !important;
+  outline:none !important;transition:.2s ease !important;
+}
+input:focus,textarea:focus,select:focus{border-color:rgba(77,163,255,.55) !important;box-shadow:0 0 0 4px rgba(77,163,255,.09) !important}
+input::placeholder,textarea::placeholder{color:#5e6b7d !important}
+
+/* Social: premium dark social network */
+.mssrp-social-page{background:transparent !important;color:#fff !important}
+.mssrp-social-shell{max-width:1500px !important}
+.mssrp-social-topbar h2{color:#fff !important;font-size:42px !important}
+.mssrp-social-topbar p{color:#7f8da1 !important}
+.mssrp-social-account,.mssrp-fb-profile-card,.mssrp-social-panel,.mssrp-fb-composer,.mssrp-fb-post,.mssrp-messenger-list,.mssrp-chat,.mssrp-profile-page,.mssrp-blocket-head,.mssrp-blocket-card{
+  background:rgba(12,17,28,.78) !important;border:1px solid var(--m-line) !important;color:#eef3fa !important;
+  box-shadow:0 18px 55px rgba(0,0,0,.24) !important;backdrop-filter:blur(18px)
+}
+.mssrp-social-tabs{background:rgba(10,15,25,.72) !important;border:1px solid var(--m-line) !important;border-radius:15px !important;box-shadow:var(--m-shadow)}
+.mssrp-social-tab{color:#7e8a9d !important;border-radius:11px !important}
+.mssrp-social-tab.active{color:#fff !important;background:linear-gradient(135deg,rgba(77,163,255,.18),rgba(117,92,255,.13)) !important;box-shadow:inset 0 0 0 1px rgba(77,163,255,.18)}
+.mssrp-fb-profile-card span,.mssrp-post-head small,.mssrp-social-panel p,.mssrp-blocket-head p,.mssrp-profile-main p,.mssrp-profile-bio{color:#7f8da1 !important}
+.mssrp-social-side-btn,.mssrp-composer-actions button,.mssrp-post-actions button{background:transparent !important;color:#b9c4d3 !important}
+.mssrp-social-side-btn:hover,.mssrp-composer-actions button:hover,.mssrp-post-actions button:hover{background:rgba(255,255,255,.05) !important;color:#fff !important}
+.mssrp-composer-placeholder,.mssrp-messenger-list>input,.mssrp-comment-form input{background:rgba(255,255,255,.055) !important;color:#fff !important}
+.mssrp-post-stats,.mssrp-profile-tabs,.mssrp-chat-header,.mssrp-chat-form,.mssrp-comments{border-color:var(--m-line) !important}
+.mssrp-chat-messages{background:rgba(4,7,13,.65) !important}
+.mssrp-chat-bubble.theirs{background:#182131 !important;color:#e8edf5 !important}
+.mssrp-chat-bubble.mine{background:linear-gradient(135deg,#368fff,#755cff) !important}
+.mssrp-blocket-toolbar input,.mssrp-blocket-toolbar select{background:rgba(12,17,28,.82) !important;color:#fff !important}
+.mssrp-profile-cover{background:radial-gradient(circle at 70% 30%,#4da3ff,transparent 24%),linear-gradient(120deg,#0b1730,#24164a,#07101f) !important;height:260px !important}
+.mssrp-profile-main{background:rgba(12,17,28,.7);padding-bottom:20px !important}
+.mssrp-profile-actions button{background:rgba(255,255,255,.08) !important;color:#fff !important}
+.mssrp-avatar{box-shadow:0 0 0 2px rgba(255,255,255,.08),0 8px 25px rgba(0,0,0,.3)}
+
+/* Bank: premium banking dashboard */
+.mssrp-bank-page{background:transparent !important;color:#fff !important}
+.mssrp-bank-shell{max-width:1500px !important}
+.mssrp-bank-topbar,.mssrp-bank-hero,.mssrp-bank-card,.mssrp-bank-transactions{
+  background:rgba(12,17,28,.78) !important;border:1px solid var(--m-line) !important;color:#fff !important;
+  box-shadow:0 18px 55px rgba(0,0,0,.22) !important;border-radius:18px !important;
+}
+.mssrp-bank-topbar{margin-bottom:16px;border-radius:18px !important}
+.mssrp-bank-mark{background:linear-gradient(135deg,#4da3ff,#725cff) !important}
+.mssrp-bank-brand strong,.mssrp-bank-hero h2,.mssrp-bank-card h3,.mssrp-bank-balance strong{color:#fff !important}
+.mssrp-bank-brand small,.mssrp-bank-user,.mssrp-bank-hero p,.mssrp-bank-balance span,.mssrp-bank-balance small,.mssrp-bank-card small,.mssrp-bank-meta{color:#7f8da1 !important}
+.mssrp-bank-notice{background:rgba(77,163,255,.07) !important;color:#8fa0b4 !important;border-left-color:#4da3ff !important;border-radius:10px}
+.mssrp-bank-pill{background:rgba(77,163,255,.12) !important;color:#69b2ff !important}
+.mssrp-bank-account-no{color:#9aa8ba !important}
+.mssrp-bank-transaction{border-color:var(--m-line) !important}
+.mssrp-bank-transaction-icon{background:rgba(255,255,255,.06) !important;color:#d9e2ef !important}
+.mssrp-bank-transaction b.positive{color:#36e39a !important}.mssrp-bank-transaction b.negative{color:#ff6c83 !important}
+
+/* Admin / dispatch */
+.cad-dashboard,.mssrp-admin-table-wrap,.mssrp-payroll-role{background:rgba(10,15,24,.82) !important;border-color:var(--m-line) !important;border-radius:16px !important}
+.cad-topbar{background:rgba(18,25,40,.75) !important;border-color:var(--m-line) !important}
+.cad-call,.cad-unit,.cad-detail,.cad-assign-box{background:rgba(17,24,37,.72) !important;border-color:var(--m-line) !important;border-radius:12px !important}
+.mssrp-admin-table th{color:#718096 !important}.mssrp-admin-table td{border-color:var(--m-line) !important;color:#dce4ee !important}
+.mssrp-admin-remove-role{background:rgba(255,85,112,.08) !important}
+
+/* Modals */
+.modal-content,.mssrp-social-compose-card{
+  background:linear-gradient(145deg,#101725,#090d16) !important;color:#fff !important;
+  border:1px solid rgba(148,163,184,.16) !important;border-radius:22px !important;
+  box-shadow:0 35px 120px rgba(0,0,0,.55) !important;
+}
+.modal-backdrop,.mssrp-social-modal-backdrop{background:rgba(1,3,8,.72) !important;backdrop-filter:blur(12px)}
+.modal-header,.modal-footer{border-color:var(--m-line) !important}
+.modal-close,.mssrp-social-modal-close{background:rgba(255,255,255,.06) !important;color:#fff !important}
+
+/* Login gate */
+.mssrp-login-gate{background:radial-gradient(circle at 50% 30%,rgba(61,145,255,.12),transparent 35%),#05070d !important;backdrop-filter:blur(20px)}
+.mssrp-login-gate-card{background:linear-gradient(145deg,rgba(17,24,39,.92),rgba(7,11,19,.96)) !important;border:1px solid rgba(77,163,255,.2) !important;border-radius:24px !important;box-shadow:0 35px 120px rgba(0,0,0,.55) !important}
+
+/* Footer */
+.mssrp-footer{background:rgba(5,7,13,.82) !important;border-top:1px solid var(--m-line) !important;color:#687588 !important;backdrop-filter:blur(18px)}
+
+/* Motion */
+@keyframes mssrpFadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.mssrp-section:not(.portal-page-hidden),.mssrp-hero-inner{animation:mssrpFadeUp .5s ease both}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* Responsive */
+@media(max-width:1050px){
+  .mssrp-hero-inner{grid-template-columns:1fr;padding:80px 28px !important}.mssrp-hero-status{justify-self:start}
+  .mssrp-section{padding:64px 24px !important}.mssrp-header-inner{padding:0 18px !important}
+}
+@media(max-width:760px){
+  .mssrp-header-inner{min-height:66px !important}.mssrp-nav{order:3;width:100%}.mssrp-header-inner{flex-wrap:wrap;padding:10px 14px !important}
+  .mssrp-account{margin-left:auto}.mssrp-hero{min-height:570px !important}.mssrp-hero-inner{padding:70px 20px !important}.mssrp-hero h1{font-size:48px !important}
+  .mssrp-section{padding:50px 16px !important}.mssrp-bank-shell,.mssrp-social-shell{padding-left:0 !important;padding-right:0 !important}
+}
